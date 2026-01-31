@@ -1,0 +1,27 @@
+[project]
+name = "filemindr"
+version = "0.1.0"
+description = "Declarative local file pipelines in Python"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Jeferson Peter" }]
+
+dependencies = [
+  "typer",
+  "pyyaml",
+  "loguru",
+  "pydantic-settings",
+]
+
+[project.scripts]
+filemindr = "filemindr.cli:app"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
