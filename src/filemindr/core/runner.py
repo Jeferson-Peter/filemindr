@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -22,7 +23,8 @@ class Rule:
     extensions: set[str]
     regex: re.Pattern | None
     older_than_days: int | None
-    move_to: Path
+    move_to: Path | None
+    copy_to: Path | None
 
 
 def _normalize_ext(ext: str) -> str:
@@ -45,10 +47,15 @@ def _load_rules(config: dict[str, Any]) -> list[Rule]:
         older_than_days = int(older) if older is not None else None
 
         action = r.get("action", {}) or {}
+        action = r.get("action", {}) or {}
         move_to_str = action.get("move_to")
-        if not move_to_str:
-            raise ValueError(f"Rule '{name}' missing action.move_to")
+        copy_to_str = action.get("copy_to")
 
+        if bool(move_to_str) == bool(copy_to_str):
+            # True/True ou False/False
+            raise ValueError(
+                f"Rule '{name}' must define exactly one of action.move_to or action.copy_to"
+            )
         rules.append(
             Rule(
                 name=name,
@@ -56,7 +63,8 @@ def _load_rules(config: dict[str, Any]) -> list[Rule]:
                 extensions=exts,
                 regex=regex,
                 older_than_days=older_than_days,
-                move_to=_p(move_to_str),
+                move_to=_p(move_to_str) if move_to_str else None,
+                copy_to=_p(copy_to_str) if copy_to_str else None,
             )
         )
 
@@ -121,7 +129,7 @@ def _resolve_conflict(dest: Path, policy: str) -> Path | None:
         i += 1
 
 
-def run_pipeline(config_path: str, dry_run: bool = False) -> None:
+def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] | None = None) -> None:
     cfg_path = Path(config_path)
     if not cfg_path.exists():
         raise FileNotFoundError(config_path)
@@ -145,7 +153,7 @@ def run_pipeline(config_path: str, dry_run: bool = False) -> None:
 
     logger.info(f"Scanning: {source}")
 
-    targets = {default_target} | {r.move_to for r in rules}
+    targets = {default_target} | {p for r in rules for p in (r.move_to, r.copy_to) if p}
     for t in targets:
         if dry_run:
             logger.debug(f"[DRY] ensure dir: {t}")
@@ -155,12 +163,16 @@ def run_pipeline(config_path: str, dry_run: bool = False) -> None:
     for file in source.iterdir():
         if not file.is_file():
             continue
+        if only_paths is not None and file not in only_paths:
+            continue
 
         total_files += 1
 
         rule = _match_rule(file, rules)
         rule_name = rule.name if rule else "default"
-        dest_dir = rule.move_to if rule else default_target
+        dest_dir = (
+            (rule.copy_to or rule.move_to) if rule else default_target
+        )
         dest = dest_dir / file.name
 
         resolved = _resolve_conflict(dest, conflict_policy)
@@ -178,7 +190,8 @@ def run_pipeline(config_path: str, dry_run: bool = False) -> None:
             by_rule[rule_name] += 1
             by_action["planned"] += 1
             chosen = f"rule={rule_name} prio={rule.priority}" if rule else "rule=default"
-            logger.debug(f"[DRY] {chosen} | {file} -> {resolved}")
+            action_name = "COPY" if (rule and rule.copy_to) else "MOVE"
+            logger.debug(f"[DRY] {action_name} {chosen} | {file} -> {resolved}")
             continue
 
         try:
@@ -187,13 +200,17 @@ def run_pipeline(config_path: str, dry_run: bool = False) -> None:
                 by_action["overwritten"] += 1
                 resolved.unlink()
 
-            file.rename(resolved)
+            if rule and rule.copy_to:
+                shutil.copy2(file, resolved)
+            else:
+                file.rename(resolved)
             moved += 1
             by_rule[rule_name] += 1
             by_action["moved"] += 1
 
             chosen = f"rule={rule_name} prio={rule.priority}" if rule else "rule=default"
-            logger.debug(f"MOVE {chosen} | {file} -> {resolved}")
+            action_name = "COPY" if (rule and rule.copy_to) else "MOVE"
+            logger.debug(f"{action_name} {chosen} | {file} -> {resolved}")
 
         except Exception as e:
             errors += 1
