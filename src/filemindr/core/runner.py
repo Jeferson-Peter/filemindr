@@ -25,6 +25,18 @@ class Rule:
     older_than_days: int | None
     move_to: Path | None
     copy_to: Path | None
+    conflict_policy: str | None
+
+def _trash(path: Path) -> None:
+    """
+    Send a file to the OS trash/recycle bin.
+    Falls back to unlink if trash is not available.
+    """
+    try:
+        from send2trash import send2trash
+        send2trash(str(path))
+    except Exception:
+        path.unlink(missing_ok=True)
 
 
 def _normalize_ext(ext: str) -> str:
@@ -47,15 +59,16 @@ def _load_rules(config: dict[str, Any]) -> list[Rule]:
         older_than_days = int(older) if older is not None else None
 
         action = r.get("action", {}) or {}
-        action = r.get("action", {}) or {}
         move_to_str = action.get("move_to")
         copy_to_str = action.get("copy_to")
 
+        rule_policy = action.get("conflict_policy")  # NEW (optional)
+
         if bool(move_to_str) == bool(copy_to_str):
-            # True/True ou False/False
             raise ValueError(
                 f"Rule '{name}' must define exactly one of action.move_to or action.copy_to"
             )
+
         rules.append(
             Rule(
                 name=name,
@@ -65,10 +78,10 @@ def _load_rules(config: dict[str, Any]) -> list[Rule]:
                 older_than_days=older_than_days,
                 move_to=_p(move_to_str) if move_to_str else None,
                 copy_to=_p(copy_to_str) if copy_to_str else None,
+                conflict_policy=str(rule_policy) if rule_policy else None,  # NEW
             )
         )
 
-    # maior priority primeiro
     rules.sort(key=lambda x: x.priority, reverse=True)
     return rules
 
@@ -112,13 +125,13 @@ def _resolve_conflict(dest: Path, policy: str) -> Path | None:
 
     policy = policy.lower()
 
-    if policy == "overwrite":
+    if policy in {"overwrite", "trash"}:
         return dest
 
     if policy == "skip":
         return None
 
-    # rename: "file (1).ext"
+    # rename
     stem, suffix = dest.stem, dest.suffix
     parent = dest.parent
     i = 1
@@ -138,7 +151,7 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
 
     source = _p(config["source"])
     default_target = _p(config.get("default_target", str(source / "others")))
-    conflict_policy = str(config.get("conflict_policy", "rename"))
+    global_policy = str(config.get("conflict_policy", "rename"))
 
     rules = _load_rules(config)
 
@@ -175,7 +188,8 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
         )
         dest = dest_dir / file.name
 
-        resolved = _resolve_conflict(dest, conflict_policy)
+        policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy)
+        resolved = _resolve_conflict(dest, policy)
         if resolved is None:
             skipped += 1
             by_rule[rule_name] += 1
@@ -183,8 +197,8 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
             logger.debug(f"SKIP (exists): {dest}")
             continue
 
-        # Se overwrite e o destino existe, vai sobrescrever
-        will_overwrite = resolved.exists() and conflict_policy.lower() == "overwrite"
+        policy = policy.lower()
+        will_replace = resolved.exists() and policy.lower() in {"overwrite", "trash"}
 
         if dry_run:
             by_rule[rule_name] += 1
@@ -195,15 +209,20 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
             continue
 
         try:
-            if will_overwrite:
-                overwritten += 1
-                by_action["overwritten"] += 1
-                resolved.unlink()
+            if will_replace:
+                if policy.lower() == "trash":
+                    _trash(resolved)
+                    by_action["trashed"] += 1
+                else:
+                    resolved.unlink()
+                    overwritten += 1
+                    by_action["overwritten"] += 1
 
             if rule and rule.copy_to:
                 shutil.copy2(file, resolved)
             else:
                 file.rename(resolved)
+
             moved += 1
             by_rule[rule_name] += 1
             by_action["moved"] += 1
@@ -211,7 +230,6 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
             chosen = f"rule={rule_name} prio={rule.priority}" if rule else "rule=default"
             action_name = "COPY" if (rule and rule.copy_to) else "MOVE"
             logger.debug(f"{action_name} {chosen} | {file} -> {resolved}")
-
         except Exception as e:
             errors += 1
             by_action["errors"] += 1
@@ -229,6 +247,7 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
         logger.info(f"Overwritten: {overwritten}")
         logger.info(f"Skipped: {skipped}")
         logger.info(f"Errors: {errors}")
+        logger.info(f"Trashed: {by_action.get('trashed', 0)}")
 
     logger.info("By rule:")
     for rule_name, count in by_rule.most_common():
