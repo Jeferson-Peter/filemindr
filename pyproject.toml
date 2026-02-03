@@ -12,6 +12,7 @@ dependencies = [
   "loguru",
   "pydantic-settings",
   "watchfiles>=1.1.1",
+  "send2trash>=2.1.0",
 ]
 
 [project.scripts]
