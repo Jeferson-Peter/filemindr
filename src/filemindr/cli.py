@@ -6,6 +6,7 @@ from loguru import logger
 
 from filemindr.core.config import resolve_config
 from filemindr.core.runner import run_pipeline
+from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
 from filemindr.core.watcher import WatchOptions, watch_and_run
 
 app = typer.Typer(help="Declarative local file pipelines")
@@ -20,7 +21,6 @@ def run(
     """
     Run filemindr pipeline.
     """
-    # Configura logging
     logger.remove()
     logger.add(sys.stdout, level=log_level.upper())
 
@@ -46,19 +46,39 @@ def watch(
     logger.add(sys.stdout, level=log_level.upper())
     config_path = resolve_config(config)
 
-    # opcional: log
     logger.info(f"Starting watch | config={config_path} dry_run={dry_run}")
 
-    # Como teu runner já lê source do YAML, a gente também pode ler de lá,
-    # mas pra manter simples: usa o mesmo source do YAML dentro do runner
-    # e aqui você informa explicitamente o dir a observar.
-    # Sugestão: parseia source do YAML também, mas dá pra começar assim:
     import yaml
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     source_dir = Path(cfg["source"]).expanduser()
 
     opts = WatchOptions(debounce_ms=debounce_ms, stable_ms=stable_ms)
     watch_and_run(source_dir=source_dir, config_path=str(config_path), dry_run=dry_run, opts=opts)
+
+@app.command("init")
+def init_config(
+    path: Path = typer.Argument(Path(".")),
+    global_: bool = typer.Option(False, "--global", help="Create global config at ~/.filemindr/config.yaml"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing config"),
+    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
+):
+    logger.remove()
+    logger.add(sys.stdout, level=log_level.upper())
+
+    if global_:
+        target = Path.home() / ".filemindr" / "config.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path = path.expanduser().resolve()
+        target = path / "filemindr.yaml"
+
+    if target.exists() and not force:
+        logger.error(f"{target.name} already exists. Use --force to overwrite.")
+        raise typer.Exit(code=1)
+
+    target.write_text(DEFAULT_CONFIG, encoding="utf-8")
+    logger.info(f"Created {target}")
+
 
 
 if __name__ == "__main__":

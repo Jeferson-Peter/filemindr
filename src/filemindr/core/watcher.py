@@ -41,6 +41,8 @@ class WatchOptions:
 
 def _should_ignore(path: Path, opts: WatchOptions) -> bool:
     name = path.name.lower()
+    if path.name.lower() == "filemindr.yaml":
+        return True
     for p in opts.ignore_prefixes:
         if name.startswith(p.lower()):
             return True
