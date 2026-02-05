@@ -148,6 +148,7 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
         raise FileNotFoundError(config_path)
 
     config = yaml.safe_load(cfg_path.read_text()) or {}
+    cfg_abs = cfg_path.expanduser().resolve()
 
     source = _p(config["source"])
     default_target = _p(config.get("default_target", str(source / "others")))
@@ -175,6 +176,8 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
 
     for file in source.iterdir():
         if not file.is_file():
+            continue
+        if file.resolve() == cfg_abs:
             continue
         if only_paths is not None and file not in only_paths:
             continue
