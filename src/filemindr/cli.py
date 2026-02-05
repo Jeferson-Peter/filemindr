@@ -38,6 +38,8 @@ def watch(
     debounce_ms: int = 500,
     stable_ms: int = 1500,
     log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
+    once: bool = typer.Option(False, "--once", help="Run once on first stable batch and exit")
+
 ):
     """
     Watch source dir and run the pipeline when files are ready.
@@ -54,7 +56,7 @@ def watch(
     source_dir = Path(cfg["source"]).expanduser()
 
     opts = WatchOptions(debounce_ms=debounce_ms, stable_ms=stable_ms)
-    watch_and_run(source_dir=source_dir, config_path=str(config_path), dry_run=dry_run, opts=opts)
+    watch_and_run(source_dir=source_dir, config_path=str(config_path), dry_run=dry_run, opts=opts, once=once)
 
 @app.command("init")
 def init_config(

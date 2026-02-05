@@ -93,13 +93,15 @@ def watch_and_run(
     config_path: str,
     dry_run: bool,
     opts: WatchOptions | None = None,
+    *,
+    once: bool = False,
 ) -> None:
     opts = opts or WatchOptions()
     source_dir = source_dir.expanduser().resolve()
 
     logger.info(f"Watching: {source_dir}")
     logger.info(f"Config: {config_path} | dry_run={dry_run}")
-    logger.info(f"debounce_ms={opts.debounce_ms} stable_ms={opts.stable_ms}")
+    logger.info(f"debounce_ms={opts.debounce_ms} stable_ms={opts.stable_ms} once={once}")  # NEW
 
     q: Queue[Path] = Queue()
     stop_event = Event()
@@ -159,6 +161,10 @@ def watch_and_run(
                 logger.info("Pipeline interrupted by user.")
             except Exception:
                 logger.exception("Pipeline run failed.")
+            finally:
+                if once and not stop_event.is_set():
+                    logger.info("watch --once completed. Exiting watcher.")
+                    stop_event.set()
 
         pending.clear()
 
