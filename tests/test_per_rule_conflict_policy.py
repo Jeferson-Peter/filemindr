@@ -74,7 +74,6 @@ def test_rule_without_policy_uses_global(tmp_path: Path):
     cfg_path = tmp_path / "filemindr.yaml"
     write_cfg(cfg_path, cfg)
 
-    # Act
     run_pipeline(str(cfg_path), dry_run=False)
 
     assert (docs / "a.txt").read_text(encoding="utf-8") == "OLD"

@@ -110,7 +110,6 @@ def explain_files(
             elif resolved != dest:
                 parts.append(f"conflict=rename -> {resolved.name}")
             else:
-                # overwrite/trash keep same dest
                 if policy in {"overwrite", "trash"} and dest.exists():
                     parts.append(f"conflict={policy}")
                 else:

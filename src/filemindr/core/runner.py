@@ -62,7 +62,7 @@ def _load_rules(config: dict[str, Any]) -> list[Rule]:
         move_to_str = action.get("move_to")
         copy_to_str = action.get("copy_to")
 
-        rule_policy = action.get("conflict_policy")  # NEW (optional)
+        rule_policy = action.get("conflict_policy")
 
         if bool(move_to_str) == bool(copy_to_str):
             raise ValueError(
@@ -78,7 +78,7 @@ def _load_rules(config: dict[str, Any]) -> list[Rule]:
                 older_than_days=older_than_days,
                 move_to=_p(move_to_str) if move_to_str else None,
                 copy_to=_p(copy_to_str) if copy_to_str else None,
-                conflict_policy=str(rule_policy) if rule_policy else None,  # NEW
+                conflict_policy=str(rule_policy) if rule_policy else None,
             )
         )
 
@@ -97,15 +97,12 @@ def _match_rule(file: Path, rules: list[Rule]) -> Rule | None:
     filename = file.name
 
     for rule in rules:
-        # extensão
         if rule.extensions and ext not in rule.extensions:
             continue
 
-        # regex no nome
         if rule.regex and not rule.regex.search(filename):
             continue
 
-        # idade
         if rule.older_than_days is not None:
             if not _is_older_than(file, rule.older_than_days):
                 continue
@@ -131,7 +128,6 @@ def _resolve_conflict(dest: Path, policy: str) -> Path | None:
     if policy == "skip":
         return None
 
-    # rename
     stem, suffix = dest.stem, dest.suffix
     parent = dest.parent
     i = 1

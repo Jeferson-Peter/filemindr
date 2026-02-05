@@ -8,7 +8,6 @@ runner = CliRunner()
 
 
 def _fake_home(monkeypatch, fake_home: Path) -> None:
-    # No Windows, setenv("HOME") não garante Path.home().
     monkeypatch.setattr(Path, "home", lambda: fake_home)
 
 
@@ -87,7 +86,6 @@ def test_resolve_config_raises_if_missing(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     _fake_home(monkeypatch, fake_home)
 
-    # garante que não existe nada
     assert not (tmp_path / "filemindr.yaml").exists()
     assert not (fake_home / ".filemindr" / "config.yaml").exists()
 

@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 
-# Ajusta o import se teu módulo estiver em outro lugar
 from filemindr.core.runner import run_pipeline
 
 
@@ -19,7 +18,6 @@ def test_copy_to_keeps_source_and_copies_to_target(tmp_path: Path) -> None:
     source.mkdir(parents=True)
     target.mkdir(parents=True)
 
-    # arquivo de exemplo
     src_file = source / "photo.png"
     src_file.write_bytes(b"fake-png")
 
@@ -43,10 +41,8 @@ rules:
 
     run_pipeline(str(config_path), dry_run=False)
 
-    # source continua
     assert src_file.exists()
 
-    # target recebeu cópia
     copied = target / "photo.png"
     assert copied.exists()
     assert copied.read_bytes() == b"fake-png"
@@ -81,10 +77,8 @@ rules:
 
     run_pipeline(str(config_path), dry_run=False)
 
-    # saiu do source
     assert not src_file.exists()
 
-    # foi pro target
     moved = target / "doc.txt"
     assert moved.exists()
     assert moved.read_text(encoding="utf-8") == "hello"

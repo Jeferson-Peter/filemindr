@@ -21,7 +21,6 @@ def test_older_than_days(tmp_path: Path):
     f = tmp_path / "setup.exe"
     f.write_text("x")
 
-    # deixa o arquivo com mtime de 2 dias atrás
     two_days_ago = time.time() - (2 * 24 * 60 * 60)
     os.utime(f, (two_days_ago, two_days_ago))
 

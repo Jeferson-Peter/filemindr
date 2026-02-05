@@ -28,7 +28,5 @@ def test_dry_run_does_not_move_files(tmp_path: Path):
 
     run_pipeline(str(cfg_path), dry_run=True)
 
-    # arquivo continua na origem
     assert (src / "a.pdf").exists()
-    # destino não deve ter o arquivo (dry-run)
     assert not (tmp_path / "docs" / "a.pdf").exists()
