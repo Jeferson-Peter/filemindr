@@ -9,6 +9,8 @@ from filemindr.core.explain import explain_files, format_explain
 from filemindr.core.runner import run_pipeline
 from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
 from filemindr.core.watcher import WatchOptions, watch_and_run
+from filemindr.core.validator import validate_config_file
+
 
 app = typer.Typer(help="Declarative local file pipelines")
 
@@ -117,6 +119,31 @@ def explain(
 
     for r in results:
         logger.info(format_explain(r, fmt=fmt, verbose=verbose))
+
+@app.command()
+def validate(
+    config: str = "filemindr.yaml",
+    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
+):
+    """
+    Validate filemindr YAML config without running the pipeline.
+    """
+    logger.remove()
+    logger.add(sys.stdout, level=log_level.upper())
+
+    config_path = resolve_config(config)
+
+    result = validate_config_file(Path(config_path))
+
+    if result.ok:
+        logger.info("Config is valid ✅ ")
+        raise typer.Exit(code=0)
+
+    logger.error("Config is invalid ❌ ")
+    for err in result.errors:
+        logger.error(f"- {err}")
+
+    raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
