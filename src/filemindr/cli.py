@@ -5,6 +5,7 @@ import typer
 from loguru import logger
 
 from filemindr.core.config import resolve_config
+from filemindr.core.explain import explain_files, format_explain
 from filemindr.core.runner import run_pipeline
 from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
 from filemindr.core.watcher import WatchOptions, watch_and_run
@@ -79,6 +80,41 @@ def init_config(
     target.write_text(DEFAULT_CONFIG, encoding="utf-8")
     logger.info(f"Created {target}")
 
+@app.command()
+def explain(
+    paths: list[Path] = typer.Argument(..., help="File paths to explain (one or more)"),
+    config: str = "filemindr.yaml",
+    fmt: str = typer.Option("one", "--format", "-f", help="one | short"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show match details and conflict info"),
+    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
+    limit: int = typer.Option(50, help="Max files to explain"),
+    all: bool = typer.Option(False, "--all", help="Disable limit"),
+):
+    """
+    Explain what filemindr would do with the given files (no changes are made).
+    """
+    logger.remove()
+    logger.add(sys.stdout, level=log_level.upper())
+
+    config_path = resolve_config(config)
+
+    expanded: list[Path] = []
+
+    for p in paths:
+        if p.is_dir():
+            expanded.extend(sorted(p.iterdir()))
+        else:
+            expanded.append(p)
+
+    if not all and len(expanded) > limit:
+        typer.echo(f"Showing first {limit} files (use --all or --limit to override)")
+        expanded = expanded[:limit]
+
+
+    results = explain_files(str(config_path), expanded, verbose=verbose)
+
+    for r in results:
+        logger.info(format_explain(r, fmt=fmt, verbose=verbose))
 
 
 if __name__ == "__main__":
