@@ -1,22 +1,31 @@
 from pathlib import Path
+import os
+import yaml
 
 
-def resolve_config(cli_path: str | None = None) -> Path:
-    # 1. CLI explícito
-    if cli_path:
-        return Path(cli_path).expanduser().resolve()
+def _expand(p):
+    return Path(os.path.expandvars(p)).expanduser().resolve()
 
-    # 2. Local (cwd)
-    local = Path.cwd() / "filemindr.yaml"
-    if local.exists():
-        return local.resolve()
 
-    # 3. Global (~/.filemindr/config.yaml)
-    global_cfg = Path.home() / ".filemindr" / "config.yaml"
-    if global_cfg.exists():
-        return global_cfg.resolve()
+def resolve_profile_config(profile: str) -> Path:
+    base = _expand("~/.filemindr")
+    profiles_file = base / "profiles.yaml"
 
-    raise FileNotFoundError(
-        "No filemindr config found. "
-        "Run `filemindr init` or provide a config path."
-    )
+    if not profiles_file.exists():
+        raise FileNotFoundError("profiles.yaml not found in ~/.filemindr | Run: filemindr profile init <name>")
+
+    data = yaml.safe_load(profiles_file.read_text()) or {}
+    profiles = data.get("profiles", {})
+
+    if profile not in profiles:
+        raise ValueError(f"Profile '{profile}' not defined")
+
+    rules_dir = _expand(profiles[profile])
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    rules_yaml = rules_dir / "rules.yaml"
+
+    if not rules_yaml.exists():
+        raise FileNotFoundError(rules_yaml)
+
+    return rules_yaml

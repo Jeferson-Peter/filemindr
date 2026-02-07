@@ -2,108 +2,93 @@ import sys
 from pathlib import Path
 
 import typer
+import yaml
 from loguru import logger
 
-from filemindr.core.config import resolve_config
+from filemindr.core.config import resolve_profile_config, _expand
 from filemindr.core.explain import explain_files, format_explain
+from filemindr.core.helpers import open_in_editor, open_with_default_app
 from filemindr.core.runner import run_pipeline
 from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
-from filemindr.core.watcher import WatchOptions, watch_and_run
 from filemindr.core.validator import validate_config_file
+from filemindr.core.watcher import WatchOptions, watch_and_run
 
 
 app = typer.Typer(help="Declarative local file pipelines")
+profile_app = typer.Typer(help="Manage profiles")
+app.add_typer(profile_app, name="profile")
+
+
+def _setup_logger(level: str) -> None:
+    logger.remove()
+    logger.add(sys.stdout, level=level.upper())
+
+
+def _home() -> Path:
+    return Path.home() / ".filemindr"
+
+
+def _profiles_file() -> Path:
+    return _home() / "profiles.yaml"
 
 
 @app.command()
 def run(
-    config: str = "filemindr.yaml",
+    profile: str = typer.Option(..., "--profile", "-p"),
     dry_run: bool = False,
-    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
+    log_level: str = typer.Option("INFO"),
 ):
-    """
-    Run filemindr pipeline.
-    """
-    logger.remove()
-    logger.add(sys.stdout, level=log_level.upper())
+    _setup_logger(log_level)
 
-    config_path = resolve_config(config)
-
-    logger.info(f"Running pipeline with config={config_path} dry_run={dry_run}")
+    config_path = resolve_profile_config(profile)
+    logger.info(f"Running pipeline | profile={profile} config={config_path} dry_run={dry_run}")
 
     run_pipeline(str(config_path), dry_run)
 
+
 @app.command()
 def watch(
-    config: str = "filemindr.yaml",
+    profile: str = typer.Option(..., "--profile", "-p"),
     dry_run: bool = False,
     debounce_ms: int = 500,
     stable_ms: int = 1500,
-    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
-    once: bool = typer.Option(False, "--once", help="Run once on first stable batch and exit")
-
+    once: bool = typer.Option(False, "--once"),
+    log_level: str = typer.Option("INFO"),
 ):
-    """
-    Watch source dir and run the pipeline when files are ready.
-    """
+    _setup_logger(log_level)
 
-    logger.remove()
-    logger.add(sys.stdout, level=log_level.upper())
-    config_path = resolve_config(config)
+    config_path = resolve_profile_config(profile)
+    logger.info(f"Starting watch | profile={profile} config={config_path} dry_run={dry_run}")
 
-    logger.info(f"Starting watch | config={config_path} dry_run={dry_run}")
-
-    import yaml
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     source_dir = Path(cfg["source"]).expanduser()
 
     opts = WatchOptions(debounce_ms=debounce_ms, stable_ms=stable_ms)
-    watch_and_run(source_dir=source_dir, config_path=str(config_path), dry_run=dry_run, opts=opts, once=once)
 
-@app.command("init")
-def init_config(
-    path: Path = typer.Argument(Path(".")),
-    global_: bool = typer.Option(False, "--global", help="Create global config at ~/.filemindr/config.yaml"),
-    force: bool = typer.Option(False, "--force", help="Overwrite existing config"),
-    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
-):
-    logger.remove()
-    logger.add(sys.stdout, level=log_level.upper())
+    watch_and_run(
+        source_dir=source_dir,
+        config_path=str(config_path),
+        dry_run=dry_run,
+        opts=opts,
+        once=once,
+    )
 
-    if global_:
-        target = Path.home() / ".filemindr" / "config.yaml"
-        target.parent.mkdir(parents=True, exist_ok=True)
-    else:
-        path = path.expanduser().resolve()
-        target = path / "filemindr.yaml"
-
-    if target.exists() and not force:
-        logger.error(f"{target.name} already exists. Use --force to overwrite.")
-        raise typer.Exit(code=1)
-
-    target.write_text(DEFAULT_CONFIG, encoding="utf-8")
-    logger.info(f"Created {target}")
 
 @app.command()
 def explain(
-    paths: list[Path] = typer.Argument(..., help="File paths to explain (one or more)"),
-    config: str = "filemindr.yaml",
-    fmt: str = typer.Option("one", "--format", "-f", help="one | short"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show match details and conflict info"),
-    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
-    limit: int = typer.Option(50, help="Max files to explain"),
-    all: bool = typer.Option(False, "--all", help="Disable limit"),
+    paths: list[Path] = typer.Argument(...),
+    profile: str = typer.Option(..., "--profile", "-p"),
+    fmt: str = typer.Option("one", "--format", "-f"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    limit: int = typer.Option(50),
+    all: bool = typer.Option(False, "--all"),
+    log_level: str = typer.Option("INFO"),
 ):
-    """
-    Explain what filemindr would do with the given files (no changes are made).
-    """
-    logger.remove()
-    logger.add(sys.stdout, level=log_level.upper())
+    _setup_logger(log_level)
 
-    config_path = resolve_config(config)
+    config_path = resolve_profile_config(profile)
 
     expanded: list[Path] = []
-
     for p in paths:
         if p.is_dir():
             expanded.extend(sorted(p.iterdir()))
@@ -111,39 +96,253 @@ def explain(
             expanded.append(p)
 
     if not all and len(expanded) > limit:
-        typer.echo(f"Showing first {limit} files (use --all or --limit to override)")
+        typer.echo(f"Showing first {limit} files")
         expanded = expanded[:limit]
-
 
     results = explain_files(str(config_path), expanded, verbose=verbose)
 
     for r in results:
         logger.info(format_explain(r, fmt=fmt, verbose=verbose))
 
+
 @app.command()
 def validate(
-    config: str = "filemindr.yaml",
-    log_level: str = typer.Option("INFO", help="Log level: INFO or DEBUG"),
+    profile: str = typer.Option(..., "--profile", "-p"),
+    log_level: str = typer.Option("INFO"),
 ):
-    """
-    Validate filemindr YAML config without running the pipeline.
-    """
-    logger.remove()
-    logger.add(sys.stdout, level=log_level.upper())
+    _setup_logger(log_level)
 
-    config_path = resolve_config(config)
-
+    config_path = resolve_profile_config(profile)
     result = validate_config_file(Path(config_path))
 
     if result.ok:
-        logger.info("Config is valid ✅ ")
+        logger.info("Config is valid ✅")
         raise typer.Exit(code=0)
 
-    logger.error("Config is invalid ❌ ")
+    logger.error("Config is invalid ❌")
     for err in result.errors:
         logger.error(f"- {err}")
 
     raise typer.Exit(code=1)
+
+
+@profile_app.command("init")
+def profile_init(
+    name: str = typer.Argument(...),
+    force: bool = typer.Option(False, "--force"),
+):
+    """
+    Create profile folder + rules.yaml and register in profiles.yaml
+    """
+
+    base = _home()
+    rules_dir = base / "rules" / name
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    rules_yaml = rules_dir / "rules.yaml"
+
+    if rules_yaml.exists() and not force:
+        typer.echo("rules.yaml already exists. Use --force.")
+        raise typer.Exit(1)
+
+    rules_yaml.write_text(DEFAULT_CONFIG, encoding="utf-8")
+
+    profiles_file = _profiles_file()
+    profiles_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if profiles_file.exists():
+        data = yaml.safe_load(profiles_file.read_text()) or {}
+    else:
+        data = {}
+
+    data.setdefault("profiles", {})[name] = str(rules_dir)
+
+    profiles_file.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    typer.echo(f"Profile '{name}' created.")
+    typer.echo(f"Rules: {rules_yaml}")
+    typer.echo(f"Registered in {profiles_file}")
+
+
+@profile_app.command("list")
+def profile_list(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show main settings (source/default_target/conflict_policy)"),
+):
+    pf = _profiles_file()
+
+    if not pf.exists():
+        typer.echo("profiles.yaml not found. Run: filemindr profile init <name>")
+        raise typer.Exit(1)
+
+    data = yaml.safe_load(pf.read_text(encoding="utf-8")) or {}
+    profiles = data.get("profiles", {})
+
+    if not profiles:
+        typer.echo("No profiles defined.")
+        raise typer.Exit()
+
+    for name in sorted(profiles.keys()):
+        rules_dir = Path(profiles[name]).expanduser()
+        rules_yaml = rules_dir / "rules.yaml"
+
+        if not verbose:
+            typer.echo(f"{name} -> {rules_dir}")
+            continue
+
+        if not rules_yaml.exists():
+            typer.echo(f"{name} -> {rules_dir}  (rules.yaml missing)")
+            continue
+
+        cfg = yaml.safe_load(rules_yaml.read_text(encoding="utf-8")) or {}
+        typer.echo(f"{name} -> {rules_dir}")
+        typer.echo(f"  source:         {cfg.get('source')}")
+        typer.echo(f"  default_target: {cfg.get('default_target')}")
+        typer.echo(f"  conflict_policy:{cfg.get('conflict_policy')}")
+
+
+@profile_app.command("edit")
+def profile_edit(name: str = typer.Argument(...)):
+    """
+    Open profile rules.yaml in an editor (VISUAL/EDITOR or OS default fallback).
+    """
+    rules_yaml = Path(resolve_profile_config(name))
+    open_in_editor(rules_yaml)
+
+
+@profile_app.command("open")
+def profile_open(name: str = typer.Argument(...)):
+    """
+    Open profile rules.yaml with the OS default application.
+    """
+    rules_yaml = Path(resolve_profile_config(name))
+    open_with_default_app(rules_yaml)
+
+
+@profile_app.command("show")
+def profile_show(name: str = typer.Argument(...)):
+    """
+    Show resolved paths and main settings of a profile.
+    """
+    rules_yaml = Path(resolve_profile_config(name))
+    cfg = yaml.safe_load(rules_yaml.read_text(encoding="utf-8")) or {}
+
+    typer.echo(f"profile:         {name}")
+    typer.echo(f"profile_dir:     {rules_yaml.parent}")
+    typer.echo(f"rules.yaml:      {rules_yaml}")
+    typer.echo("")
+    typer.echo(f"source:          {cfg.get('source')}")
+    typer.echo(f"default_target:  {cfg.get('default_target')}")
+    typer.echo(f"conflict_policy: {cfg.get('conflict_policy')}")
+
+
+@profile_app.command("remove")
+def profile_remove(
+    name: str = typer.Argument(...),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    """
+    Completely remove profile: registry entry + folder (rules.yaml, etc).
+    """
+    pf = _profiles_file()
+    if not pf.exists():
+        typer.echo("profiles.yaml not found. Run: filemindr profile init <name>")
+        raise typer.Exit(1)
+
+    data = yaml.safe_load(pf.read_text(encoding="utf-8")) or {}
+    profiles = data.get("profiles", {})
+
+    if name not in profiles:
+        typer.echo(f"Profile '{name}' not found.\n\nCreate it with:\n  filemindr profile init {name}")
+        raise typer.Exit(1)
+
+    profile_dir = Path(profiles[name]).expanduser()
+
+    if not yes:
+        if not typer.confirm(f"Delete profile '{name}' and ALL its files at:\n{profile_dir}\nContinue?"):
+            raise typer.Exit()
+
+    del profiles[name]
+    pf.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    if profile_dir.exists():
+        import shutil
+        shutil.rmtree(profile_dir)
+
+    typer.echo(f"Profile '{name}' completely removed.")
+
+
+
+@app.command()
+def doctor():
+    """
+    Sanity checks on all profiles:
+    - profiles.yaml exists
+    - profile directory exists
+    - rules.yaml exists
+    - YAML validates
+    - source/default_target paths resolve and exist (warn/create suggestion)
+    """
+    pf = _profiles_file()
+
+    if not pf.exists():
+        typer.echo("profiles.yaml not found. Run: filemindr profile init <name>")
+        raise typer.Exit(1)
+
+    data = yaml.safe_load(pf.read_text(encoding="utf-8")) or {}
+    profiles = data.get("profiles", {})
+
+    if not profiles:
+        typer.echo("No profiles defined.")
+        raise typer.Exit()
+
+    ok = True
+
+    for name in sorted(profiles.keys()):
+        rules_dir = Path(profiles[name]).expanduser()
+        rules_yaml = rules_dir / "rules.yaml"
+
+        if not rules_dir.exists():
+            typer.echo(f"❌ {name}: profile directory not found -> {rules_dir}")
+            ok = False
+            continue
+
+        if not rules_yaml.exists():
+            typer.echo(f"❌ {name}: rules.yaml missing -> {rules_yaml}")
+            ok = False
+            continue
+
+        result = validate_config_file(rules_yaml)
+        if not result.ok:
+            typer.echo(f"❌ {name}: invalid config")
+            for err in result.errors:
+                typer.echo(f"   - {err}")
+            ok = False
+            continue
+
+        cfg = yaml.safe_load(rules_yaml.read_text(encoding="utf-8")) or {}
+        source = cfg.get("source")
+        default_target = cfg.get("default_target")
+
+        source_path = _expand(source) if isinstance(source, str) else None
+        target_path = _expand(default_target) if isinstance(default_target, str) else None
+
+        warn = False
+
+        if source_path and not source_path.exists():
+            typer.echo(f"⚠ {name}: source does not exist -> {source_path}")
+            warn = True
+
+        if target_path and not target_path.exists():
+            typer.echo(f"⚠ {name}: default_target does not exist -> {target_path}")
+            warn = True
+
+        if warn:
+            typer.echo(f"✔ {name}: config valid (with warnings)")
+        else:
+            typer.echo(f"✔ {name}: OK")
+
+    if not ok:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
