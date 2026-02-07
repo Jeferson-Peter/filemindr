@@ -1,97 +1,112 @@
-# Filemindr — Rule-Driven Local File Automation (v2)
+# Filemindr --- Rule-Driven Local File Automation (v2)
 
-**Declarative local file automation for humans and scripts.**
+**Declarative local file automation using profiles.**
 
-Filemindr lets you describe *what should happen* to your files — not *how*.
+Filemindr lets you describe *what should happen* to your files --- not
+*how*.
 
-You define rules in YAML (extensions, regex, age, priority), and filemindr applies them safely with dry-run support, conflict handling, real-time watching, and a clean CLI.
+You define rule pipelines in YAML (extensions, regex, age, priority),
+group them into **profiles**, and run them safely via a clean CLI.
 
 Built as a learning + portfolio project with strong focus on:
-- predictable behavior
-- safety by default
-- excellent CLI DX
 
----
+-   predictable behavior\
+-   safety by default\
+-   excellent CLI DX
+
+------------------------------------------------------------------------
 
 ## ✨ Features (v2)
 
 ### Core
 
-- Declarative YAML configuration
-- Rule engine with priority (highest wins)
-- Match by:
-  - file extensions
-  - regex on filename
-  - file age (`older_than_days`)
-- Actions:
-  - `move_to`
-  - `copy_to`
-- Global and per-rule conflict policies:
-  - `rename`
-  - `skip`
-  - `overwrite`
-  - `trash`
-- Dry-run mode (preview changes before touching files)
-- Final summary report
-- Structured logging (`INFO`, `DEBUG`, etc)
-- Cross-platform (Windows, macOS, Linux)
+-   Profiles-based configuration (`~/.filemindr`)
+-   Declarative YAML rules
+-   Rule engine with priority (highest wins)
+-   Match by:
+    -   file extensions
+    -   regex on filename
+    -   file age (`older_than_days`)
+-   Actions:
+    -   `move_to`
+    -   `copy_to`
+-   Global and per-rule conflict policies:
+    -   `rename`
+    -   `skip`
+    -   `overwrite`
+    -   `trash`
+-   Dry-run mode
+-   Final summary report
+-   Structured logging (`INFO`, `DEBUG`)
+-   Cross-platform (Windows, macOS, Linux)
 
-### CLI
-
-- `init` (local or global config)
-- Config resolution:
-  **CLI → local → global**
-- `run` + `--dry-run`
-- `watch` (continuous)
-- `watch --once`
-- `explain` (one-liner preview per file, with optional limit)
-- `validate` (schema + rule validation)
-- Real trash support via `send2trash` (with unlink fallback)
-- Watcher debounce + file stability detection
-
----
+------------------------------------------------------------------------
 
 ## 📦 Installation
 
-### Recommended (pipx)
-
-```bash
+``` bash
 pipx install filemindr
 ```
 
-### pip
+or
 
-```bash
+``` bash
 pip install filemindr
 ```
 
-### Local development
+Dev:
 
-```bash
-pip install -e .
-```
-
-With uv:
-
-```bash
+``` bash
 uv sync
 ```
 
----
+------------------------------------------------------------------------
+
+## 🧠 Profiles (core concept)
+
+Instead of a single global YAML, Filemindr uses **profiles**.
+
+Each profile lives in:
+
+    ~/.filemindr/rules/<profile>/rules.yaml
+
+And all profiles are registered in:
+
+    ~/.filemindr/profiles.yaml
+
+This allows:
+
+-   multiple setups (home, work, media, etc)
+-   explicit selection via CLI
+-   zero ambiguity about which config is running
+
+------------------------------------------------------------------------
 
 ## 🚀 Quick Start
 
-Create a config:
+Create your first profile:
 
-```bash
-filemindr init
+``` bash
+filemindr profile init home
 ```
 
-This creates `filemindr.yaml` in the current directory.
+This creates:
 
-Example:
+    ~/.filemindr/
+    ├── profiles.yaml
+    └── rules/
+        └── home/
+            └── rules.yaml
 
-```yaml
+Open and edit the rules:
+
+``` bash
+filemindr profile open home
+```
+
+Example `rules.yaml`:
+
+``` yaml
 source: ~/Downloads
 default_target: ~/Downloads/others
 conflict_policy: rename
@@ -105,186 +120,133 @@ rules:
     action:
       move_to: ~/Downloads/finance/invoices
 
-  - name: documents
-    priority: 50
-    match:
-      extensions: ["pdf", "docx", "xlsx"]
-    action:
-      move_to: ~/Downloads/documents
-
   - name: images
     priority: 40
     match:
-      extensions: ["jpg", "jpeg", "png", "webp"]
+      extensions: ["jpg", "png", "webp"]
     action:
       move_to: ~/Downloads/images
-
-  - name: old_installers
-    priority: 80
-    match:
-      extensions: ["exe", "msi"]
-      older_than_days: 14
-    action:
-      move_to: ~/Downloads/installers/old
 ```
 
 Preview:
 
-```bash
-filemindr run --dry-run
+``` bash
+filemindr run -p home --dry-run
 ```
 
-Run for real:
+Run:
 
-```bash
-filemindr run
+``` bash
+filemindr run -p home
 ```
 
 Verbose:
 
-```bash
-filemindr run --log-level DEBUG
+``` bash
+filemindr run -p home --log-level DEBUG
 ```
 
----
+------------------------------------------------------------------------
 
-## 🧠 How it works
+## 📂 Profile Commands
 
-1. Filemindr scans the source directory
-2. Rules are evaluated by priority (highest first)
-3. The first matching rule wins
-4. The configured action is applied
-5. Conflicts are resolved via the selected policy
-6. A summary is printed
+Create:
 
----
-
-## ⚔ Conflict Policy
-
-Can be defined globally or per rule.
-
-Supported values:
-
-- `rename` (default): `file (1).ext`, `file (2).ext`, etc
-- `skip`: keep existing file
-- `overwrite`: replace destination
-- `trash`: send existing file to system trash
-
-Per rule:
-
-```yaml
-action:
-  move_to: ~/archive
-  conflict_policy: overwrite
+``` bash
+filemindr profile init home
 ```
 
----
+List:
 
-## 📁 Config Resolution
-
-Filemindr loads configuration in this order:
-
-1. CLI flags (highest priority)
-2. Local `filemindr.yaml`
-3. Global `~/.filemindr/config.yaml`
-
-You can create global config with:
-
-```bash
-filemindr init --global
+``` bash
+filemindr profile list
 ```
 
----
+Show path:
+
+``` bash
+filemindr profile show home
+```
+
+Open in editor:
+
+``` bash
+filemindr profile open home
+```
+
+Remove completely:
+
+``` bash
+filemindr profile remove home
+```
+
+------------------------------------------------------------------------
 
 ## 👀 Watch Mode
 
-Continuous watching:
+Continuous:
 
-```bash
-filemindr watch
+``` bash
+filemindr watch -p home
 ```
 
-Single batch (useful for scripts):
+Single batch:
 
-```bash
-filemindr watch --once
+``` bash
+filemindr watch -p home --once
 ```
 
-Watcher includes debounce + file stability checks to avoid processing half-written files.
-
----
+------------------------------------------------------------------------
 
 ## 🔍 Explain Mode
 
-Preview which rule each file would use:
-
-```bash
-filemindr explain
+``` bash
+filemindr explain -p home ~/Downloads
 ```
 
-Limit output:
+------------------------------------------------------------------------
 
-```bash
-filemindr explain --limit 20
+## ✅ Validate
+
+``` bash
+filemindr validate -p home
 ```
 
-Outputs one-liners:
+------------------------------------------------------------------------
 
-```
-photo.jpg → images
-invoice_2024.pdf → invoices
-```
+## 🩺 Doctor
 
----
-
-## ✅ Validate Config
-
-Validate schema + rules:
-
-```bash
-filemindr validate
+``` bash
+filemindr doctor
 ```
 
-Fails fast with clear errors.
+------------------------------------------------------------------------
 
----
+## ⚔ Conflict Policy
+
+Supported:
+
+-   `rename`
+-   `skip`
+-   `overwrite`
+-   `trash`
+
+------------------------------------------------------------------------
 
 ## 🧪 Development
 
-Run tests:
-
-```bash
+``` bash
 uv run pytest
 ```
 
-Project layout:
-
-```
-filemindr/
-├── src/filemindr/
-│   ├── core/
-│   │   ├── pipeline.py
-│   │   └── watcher.py
-│   ├── cli.py
-│   └── rules.py
-├── tests/
-├── pyproject.toml
-└── README.md
-```
-
----
+------------------------------------------------------------------------
 
 ## 🛠 Status
 
 Stable v2.
 
-APIs are considered usable but may evolve.
-
----
+------------------------------------------------------------------------
 
 ## 📄 License
 
 MIT
-
----
-
