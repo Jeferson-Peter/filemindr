@@ -27,12 +27,9 @@ def _profile_paths(fake_home: Path, profile: str) -> tuple[Path, Path, Path]:
     return base, rules_yaml, profiles_yaml
 
 
-def test_profile_init_creates_rules_and_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    fake_home = tmp_path / "home"
-    _fake_home(monkeypatch, fake_home)
-
+def test_profile_init_creates_rules_and_registry(fake_home: Path, runner: CliRunner):
     result = runner.invoke(app, ["profile", "init", "home"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
 
     _, rules_yaml, profiles_yaml = _profile_paths(fake_home, "home")
 

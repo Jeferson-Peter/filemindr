@@ -56,11 +56,7 @@ def test_explain_marks_directories_as_skip(tmp_path: Path, fake_home: Path, runn
     result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home"])
     assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
 
-def test_explain_respects_default_limit(tmp_path: Path, monkeypatch):
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-
+def test_explain_respects_default_limit(tmp_path: Path, fake_home: Path):
     _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     for i in range(0, 80):
@@ -78,21 +74,16 @@ def test_explain_respects_default_limit(tmp_path: Path, monkeypatch):
     assert "f079.txt" not in out
 
 
-def test_explain_limit_option_overrides(tmp_path: Path, monkeypatch):
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-
+def test_explain_limit_option_overrides(tmp_path: Path, fake_home: Path, runner: CliRunner):
     _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     for i in range(0, 30):
         (tmp_path / f"f{i:03d}.txt").write_text("x", encoding="utf-8")
 
     result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home", "--limit", "10"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
 
     out = (result.stdout or "") + (result.stderr or "")
-
     assert "f000.txt" in out
     assert "f009.txt" in out
     assert "f010.txt" not in out
