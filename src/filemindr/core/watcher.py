@@ -101,7 +101,7 @@ def watch_and_run(
 
     logger.info(f"Watching: {source_dir}")
     logger.info(f"Config: {config_path} | dry_run={dry_run}")
-    logger.info(f"debounce_ms={opts.debounce_ms} stable_ms={opts.stable_ms} once={once}")  # NEW
+    logger.info(f"debounce_ms={opts.debounce_ms} stable_ms={opts.stable_ms} once={once}")
 
     q: Queue[Path] = Queue()
     stop_event = Event()
