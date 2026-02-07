@@ -1,21 +1,40 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from filemindr.cli import app
 
-
 runner = CliRunner()
 
 
-def _write_config(tmp_path: Path) -> None:
-    (tmp_path / "filemindr.yaml").write_text(
-        """
-source: .
-default_target: ./others
+def _write_profile(fake_home: Path, profile: str, rules_yaml: str) -> None:
+    """
+    Create:
+      ~/.filemindr/profiles.yaml
+      ~/.filemindr/rules/<profile>/rules.yaml
+    under fake_home (which is Path.home()).
+    """
+    base = fake_home / ".filemindr"
+    rules_dir = base / "rules" / profile
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    (rules_dir / "rules.yaml").write_text(rules_yaml, encoding="utf-8")
+
+    profiles_yaml = base / "profiles.yaml"
+    profiles_yaml.write_text(
+        f"profiles:\n  {profile}: {rules_dir.as_posix()}\n",
+        encoding="utf-8",
+    )
+
+
+def _rules_for(source_dir: Path) -> str:
+    src = source_dir.as_posix()
+    return f"""
+source: {src}
+default_target: {src}/others
 conflict_policy: rename
 
 rules:
@@ -24,23 +43,24 @@ rules:
     match:
       extensions: ["jpg", "png"]
     action:
-      move_to: ./images
-""".lstrip(),
-        encoding="utf-8",
-    )
+      move_to: {src}/images
+""".lstrip()
 
 
 def test_explain_marks_directories_as_skip(tmp_path: Path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     (tmp_path / "documents").mkdir()
     (tmp_path / "pic.jpg").write_text("x", encoding="utf-8")
 
-    result = runner.invoke(app, ["explain", str(tmp_path)])
-
+    result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home"])
     assert result.exit_code == 0
-    out = result.stdout + result.stderr
+
+    out = (result.stdout or "") + (result.stderr or "")
 
     assert "documents" in out
     assert "[SKIP]" in out
@@ -49,16 +69,19 @@ def test_explain_marks_directories_as_skip(tmp_path: Path, monkeypatch):
 
 
 def test_explain_respects_default_limit(tmp_path: Path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     for i in range(0, 80):
         (tmp_path / f"f{i:03d}.txt").write_text("x", encoding="utf-8")
 
-    result = runner.invoke(app, ["explain", str(tmp_path)])
-
+    result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home"])
     assert result.exit_code == 0
-    out = result.stdout + result.stderr
+
+    out = (result.stdout or "") + (result.stderr or "")
 
     assert "Showing first" in out
 
@@ -68,16 +91,19 @@ def test_explain_respects_default_limit(tmp_path: Path, monkeypatch):
 
 
 def test_explain_limit_option_overrides(tmp_path: Path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     for i in range(0, 30):
         (tmp_path / f"f{i:03d}.txt").write_text("x", encoding="utf-8")
 
-    result = runner.invoke(app, ["explain", str(tmp_path), "--limit", "10"])
-
+    result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home", "--limit", "10"])
     assert result.exit_code == 0
-    out = result.stdout + result.stderr
+
+    out = (result.stdout or "") + (result.stderr or "")
 
     assert "f000.txt" in out
     assert "f009.txt" in out
@@ -85,16 +111,19 @@ def test_explain_limit_option_overrides(tmp_path: Path, monkeypatch):
 
 
 def test_explain_all_disables_limit(tmp_path: Path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    _write_config(tmp_path)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     for i in range(0, 60):
         (tmp_path / f"f{i:03d}.txt").write_text("x", encoding="utf-8")
 
-    result = runner.invoke(app, ["explain", str(tmp_path), "--all"])
-
+    result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home", "--all"])
     assert result.exit_code == 0
-    out = result.stdout + result.stderr
+
+    out = (result.stdout or "") + (result.stderr or "")
 
     assert "f000.txt" in out
     assert "f059.txt" in out
