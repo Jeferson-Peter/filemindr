@@ -89,21 +89,16 @@ def test_explain_limit_option_overrides(tmp_path: Path, fake_home: Path, runner:
     assert "f010.txt" not in out
 
 
-def test_explain_all_disables_limit(tmp_path: Path, monkeypatch):
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-
+def test_explain_all_disables_limit(tmp_path: Path, fake_home: Path, runner: CliRunner):
     _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     for i in range(0, 60):
         (tmp_path / f"f{i:03d}.txt").write_text("x", encoding="utf-8")
 
     result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home", "--all"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
 
     out = (result.stdout or "") + (result.stderr or "")
-
     assert "f000.txt" in out
     assert "f059.txt" in out
     assert "Showing first" not in out
