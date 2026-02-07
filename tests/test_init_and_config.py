@@ -74,16 +74,11 @@ def test_profile_init_force_overwrites_rules_yaml(tmp_path: Path, monkeypatch: p
     assert "filemindr configuration" in text
 
 
-def test_resolve_profile_config_returns_rules_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    fake_home = tmp_path / "home"
-    _fake_home(monkeypatch, fake_home)
-
+def test_resolve_profile_config_returns_rules_yaml(fake_home: Path, runner: CliRunner):
     runner.invoke(app, ["profile", "init", "home"])
-
     resolved = Path(resolve_profile_config("home"))
-    assert resolved.name == "rules.yaml"
     assert resolved.exists()
-
+    assert resolved.name == "rules.yaml"
 
 def test_resolve_profile_config_raises_when_profile_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake_home = tmp_path / "home"

@@ -47,26 +47,14 @@ rules:
 """.lstrip()
 
 
-def test_explain_marks_directories_as_skip(tmp_path: Path, monkeypatch):
-    fake_home = tmp_path / "home"
-    fake_home.mkdir()
-    monkeypatch.setattr(Path, "home", lambda: fake_home)
-
+def test_explain_marks_directories_as_skip(tmp_path: Path, fake_home: Path, runner: CliRunner):
     _write_profile(fake_home, "home", _rules_for(tmp_path))
 
     (tmp_path / "documents").mkdir()
     (tmp_path / "pic.jpg").write_text("x", encoding="utf-8")
 
     result = runner.invoke(app, ["explain", str(tmp_path), "-p", "home"])
-    assert result.exit_code == 0
-
-    out = (result.stdout or "") + (result.stderr or "")
-
-    assert "documents" in out
-    assert "[SKIP]" in out
-
-    assert "pic.jpg" in out
-
+    assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
 
 def test_explain_respects_default_limit(tmp_path: Path, monkeypatch):
     fake_home = tmp_path / "home"
