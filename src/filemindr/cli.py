@@ -168,6 +168,9 @@ def profile_init(
 def profile_list(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show main settings (source/default_target/conflict_policy)"),
 ):
+    """
+    List all profiles
+    """
     pf = _profiles_file()
 
     if not pf.exists():
