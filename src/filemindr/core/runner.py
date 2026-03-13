@@ -11,9 +11,11 @@ from typing import Any
 import yaml
 from loguru import logger
 
+from filemindr.core.config import expand_path
 
-def _p(value: str) -> Path:
-    return Path(value).expanduser()
+
+def _p(value: str, *, base_dir: Path | None = None) -> Path:
+    return expand_path(value, base_dir=base_dir)
 
 
 @dataclass(frozen=True)
@@ -27,41 +29,49 @@ class Rule:
     copy_to: Path | None
     conflict_policy: str | None
 
+
 def _trash(path: Path) -> None:
     """
     Send a file to the OS trash/recycle bin.
-    Falls back to unlink if trash is not available.
+    Raises if trash is not available or the operation fails.
     """
     try:
         from send2trash import send2trash
         send2trash(str(path))
-    except Exception:
-        path.unlink(missing_ok=True)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to send '{path}' to trash") from exc
 
 
 def _normalize_ext(ext: str) -> str:
     return ext.lower().lstrip(".")
 
 
-def _load_rules(config: dict[str, Any]) -> list[Rule]:
+def _action_name(rule: Rule | None) -> str:
+    return "COPY" if (rule and rule.copy_to) else "MOVE"
+
+
+def _log_rule_choice(rule: Rule | None) -> str:
+    return f"rule={rule.name} prio={rule.priority}" if rule else "rule=default"
+
+
+def _load_rules(config: dict[str, Any], *, base_dir: Path | None = None) -> list[Rule]:
     rules_cfg = config.get("rules", [])
     rules: list[Rule] = []
 
-    for r in rules_cfg:
-        name = r.get("name", "unnamed")
-        priority = int(r.get("priority", 0))
+    for rule_cfg in rules_cfg:
+        name = rule_cfg.get("name", "unnamed")
+        priority = int(rule_cfg.get("priority", 0))
 
-        match = r.get("match", {}) or {}
-        exts = {_normalize_ext(e) for e in match.get("extensions", [])}
+        match = rule_cfg.get("match", {}) or {}
+        exts = {_normalize_ext(ext) for ext in match.get("extensions", [])}
         regex_raw = match.get("regex")
         regex = re.compile(regex_raw) if regex_raw else None
         older = match.get("older_than_days")
         older_than_days = int(older) if older is not None else None
 
-        action = r.get("action", {}) or {}
+        action = rule_cfg.get("action", {}) or {}
         move_to_str = action.get("move_to")
         copy_to_str = action.get("copy_to")
-
         rule_policy = action.get("conflict_policy")
 
         if bool(move_to_str) == bool(copy_to_str):
@@ -76,13 +86,13 @@ def _load_rules(config: dict[str, Any]) -> list[Rule]:
                 extensions=exts,
                 regex=regex,
                 older_than_days=older_than_days,
-                move_to=_p(move_to_str) if move_to_str else None,
-                copy_to=_p(copy_to_str) if copy_to_str else None,
+                move_to=_p(move_to_str, base_dir=base_dir) if move_to_str else None,
+                copy_to=_p(copy_to_str, base_dir=base_dir) if copy_to_str else None,
                 conflict_policy=str(rule_policy) if rule_policy else None,
             )
         )
 
-    rules.sort(key=lambda x: x.priority, reverse=True)
+    rules.sort(key=lambda item: item.priority, reverse=True)
     return rules
 
 
@@ -99,17 +109,14 @@ def _match_rule(file: Path, rules: list[Rule]) -> Rule | None:
     for rule in rules:
         if rule.extensions and ext not in rule.extensions:
             continue
-
         if rule.regex and not rule.regex.search(filename):
             continue
-
-        if rule.older_than_days is not None:
-            if not _is_older_than(file, rule.older_than_days):
-                continue
-
+        if rule.older_than_days is not None and not _is_older_than(file, rule.older_than_days):
+            continue
         return rule
 
     return None
+
 
 def _resolve_conflict(dest: Path, policy: str) -> Path | None:
     """
@@ -124,7 +131,6 @@ def _resolve_conflict(dest: Path, policy: str) -> Path | None:
 
     if policy in {"overwrite", "trash"}:
         return dest
-
     if policy == "skip":
         return None
 
@@ -139,21 +145,21 @@ def _resolve_conflict(dest: Path, policy: str) -> Path | None:
 
 
 def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] | None = None) -> None:
-    cfg_path = Path(config_path)
-    if not cfg_path.exists():
+    cfg_abs = Path(config_path).expanduser().resolve()
+    if not cfg_abs.exists():
         raise FileNotFoundError(config_path)
 
-    config = yaml.safe_load(cfg_path.read_text()) or {}
-    cfg_abs = cfg_path.expanduser().resolve()
+    config = yaml.safe_load(cfg_abs.read_text()) or {}
+    base_dir = cfg_abs.parent
 
-    source = _p(config["source"])
-    default_target = _p(config.get("default_target", str(source / "others")))
+    source = _p(config["source"], base_dir=base_dir)
+    default_target = _p(config.get("default_target", str(source / "others")), base_dir=base_dir)
     global_policy = str(config.get("conflict_policy", "rename"))
-
-    rules = _load_rules(config)
+    rules = _load_rules(config, base_dir=base_dir)
 
     total_files = 0
     moved = 0
+    copied = 0
     skipped = 0
     overwritten = 0
     errors = 0
@@ -163,12 +169,12 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
 
     logger.info(f"Scanning: {source}")
 
-    targets = {default_target} | {p for r in rules for p in (r.move_to, r.copy_to) if p}
-    for t in targets:
+    targets = {default_target} | {p for rule in rules for p in (rule.move_to, rule.copy_to) if p}
+    for target in targets:
         if dry_run:
-            logger.debug(f"[DRY] ensure dir: {t}")
+            logger.debug(f"[DRY] ensure dir: {target}")
         else:
-            t.mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
 
     for file in source.iterdir():
         if not file.is_file():
@@ -182,12 +188,10 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
 
         rule = _match_rule(file, rules)
         rule_name = rule.name if rule else "default"
-        dest_dir = (
-            (rule.copy_to or rule.move_to) if rule else default_target
-        )
+        dest_dir = (rule.copy_to or rule.move_to) if rule else default_target
         dest = dest_dir / file.name
 
-        policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy)
+        policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy).lower()
         resolved = _resolve_conflict(dest, policy)
         if resolved is None:
             skipped += 1
@@ -196,20 +200,22 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
             logger.debug(f"SKIP (exists): {dest}")
             continue
 
-        policy = policy.lower()
-        will_replace = resolved.exists() and policy.lower() in {"overwrite", "trash"}
+        action_name = _action_name(rule)
+        chosen = _log_rule_choice(rule)
+        will_replace = resolved.exists() and policy in {"overwrite", "trash"}
 
         if dry_run:
             by_rule[rule_name] += 1
-            by_action["planned"] += 1
-            chosen = f"rule={rule_name} prio={rule.priority}" if rule else "rule=default"
-            action_name = "COPY" if (rule and rule.copy_to) else "MOVE"
+            if action_name == "COPY":
+                by_action["planned_copies"] += 1
+            else:
+                by_action["planned_moves"] += 1
             logger.debug(f"[DRY] {action_name} {chosen} | {file} -> {resolved}")
             continue
 
         try:
             if will_replace:
-                if policy.lower() == "trash":
+                if policy == "trash":
                     _trash(resolved)
                     by_action["trashed"] += 1
                 else:
@@ -217,32 +223,32 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
                     overwritten += 1
                     by_action["overwritten"] += 1
 
-            if rule and rule.copy_to:
+            if action_name == "COPY":
                 shutil.copy2(file, resolved)
+                copied += 1
+                by_action["copied"] += 1
             else:
                 file.rename(resolved)
+                moved += 1
+                by_action["moved"] += 1
 
-            moved += 1
             by_rule[rule_name] += 1
-            by_action["moved"] += 1
-
-            chosen = f"rule={rule_name} prio={rule.priority}" if rule else "rule=default"
-            action_name = "COPY" if (rule and rule.copy_to) else "MOVE"
             logger.debug(f"{action_name} {chosen} | {file} -> {resolved}")
         except Exception as e:
             errors += 1
             by_action["errors"] += 1
             logger.exception(f"ERROR moving {file} -> {resolved}: {e}")
 
-
     logger.info("==== SUMMARY ====")
     logger.info(f"Dry-run: {dry_run}")
     logger.info(f"Files scanned: {total_files}")
 
     if dry_run:
-        logger.info(f"Planned moves: {by_action.get('planned', 0)}")
+        logger.info(f"Planned moves: {by_action.get('planned_moves', 0)}")
+        logger.info(f"Planned copies: {by_action.get('planned_copies', 0)}")
     else:
         logger.info(f"Moved: {moved}")
+        logger.info(f"Copied: {copied}")
         logger.info(f"Overwritten: {overwritten}")
         logger.info(f"Skipped: {skipped}")
         logger.info(f"Errors: {errors}")

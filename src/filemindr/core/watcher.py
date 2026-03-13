@@ -151,6 +151,11 @@ def watch_and_run(
             if not _should_ignore(p, opts)
             and _is_stable(p, opts.stable_ms, opts.poll_interval_ms)
         }
+        still_pending = pending - ready
+
+        if still_pending and opts.log_pending:
+            logger.debug(f"Still waiting for stability ({len(still_pending)} paths).")
+
 
         if ready:
             logger.info(f"Detected stable changes ({len(ready)} paths). Running pipeline...")
@@ -166,7 +171,7 @@ def watch_and_run(
                     logger.info("watch --once completed. Exiting watcher.")
                     stop_event.set()
 
-        pending.clear()
+        pending = still_pending
 
     quiet_s = opts.debounce_ms / 1000
     tick_s = max(0.05, opts.main_loop_tick_ms / 1000)
@@ -216,3 +221,4 @@ def watch_and_run(
         signal.signal(signal.SIGINT, prev_handler)
 
         logger.info("Watcher shutdown complete.")
+

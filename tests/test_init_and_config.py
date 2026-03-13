@@ -83,3 +83,22 @@ def test_resolve_profile_config_raises_when_profile_missing(tmp_path: Path, monk
 
     with pytest.raises(Exception):
         resolve_profile_config("missing-profile")
+
+
+def test_resolve_profile_config_does_not_create_missing_profile_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake_home = tmp_path / "home"
+    _fake_home(monkeypatch, fake_home)
+
+    base = fake_home / ".filemindr"
+    base.mkdir(parents=True, exist_ok=True)
+
+    missing_dir = base / "rules" / "ghost"
+    (base / "profiles.yaml").write_text(
+        f"profiles:\n  ghost: {missing_dir.as_posix()}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(FileNotFoundError):
+        resolve_profile_config("ghost")
+
+    assert not missing_dir.exists()
