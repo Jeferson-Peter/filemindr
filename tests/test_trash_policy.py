@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import filemindr.core.runner as runner
 
 
@@ -31,7 +33,7 @@ def test_trash_calls_send2trash(monkeypatch, tmp_path: Path):
     assert calls["arg"] == str(target)
 
 
-def test_trash_falls_back_to_unlink_when_send2trash_fails(monkeypatch, tmp_path: Path):
+def test_trash_raises_and_preserves_file_when_send2trash_fails(monkeypatch, tmp_path: Path):
     target = tmp_path / "existing.txt"
     target.write_text("old", encoding="utf-8")
 
@@ -41,26 +43,17 @@ def test_trash_falls_back_to_unlink_when_send2trash_fails(monkeypatch, tmp_path:
     import sys
     sys.modules["send2trash"] = SimpleNamespace(send2trash=failing_send2trash)
 
-    unlinked = {"n": 0}
+    with pytest.raises(RuntimeError, match="Failed to send"):
+        runner._trash(target)
 
-    real_unlink = Path.unlink
+    assert target.exists()
+    assert target.read_text(encoding="utf-8") == "old"
 
-    def fake_unlink(self, missing_ok: bool = False):
-        unlinked["n"] += 1
-        return real_unlink(self, missing_ok=missing_ok)
-
-    monkeypatch.setattr(Path, "unlink", fake_unlink, raising=True)
-
-    runner._trash(target)
-
-    assert unlinked["n"] == 1
-    assert not target.exists()
 
 def test_policy_trash_replaces_existing_destination(monkeypatch, tmp_path: Path):
     """
-    Integração leve: simula conflito e garante que:
-    - o destino existente é "trashed"
-    - o novo arquivo é copiado/movido para o destino final
+    Lightweight integration: if trash succeeds, the existing destination is
+    removed and the new file is copied into place.
     """
     source_dir = tmp_path / "Downloads"
     source_dir.mkdir()
@@ -107,3 +100,46 @@ rules:
     assert trashed["arg"] == dest
     assert dest.exists()
     assert dest.read_text(encoding="utf-8") == "new"
+
+
+def test_policy_trash_does_not_replace_destination_when_trash_fails(monkeypatch, tmp_path: Path):
+    source_dir = tmp_path / "Downloads"
+    source_dir.mkdir()
+
+    dest_dir = tmp_path / "images"
+    dest_dir.mkdir()
+
+    src = source_dir / "pic.jpg"
+    src.write_text("new", encoding="utf-8")
+
+    dest = dest_dir / "pic.jpg"
+    dest.write_text("old", encoding="utf-8")
+
+    cfg = tmp_path / "filemindr.yaml"
+    cfg.write_text(
+        f"""
+source: {source_dir}
+default_target: {tmp_path / "others"}
+conflict_policy: trash
+rules:
+  - name: images
+    priority: 10
+    match:
+      extensions: ["jpg"]
+    action:
+      copy_to: {dest_dir}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def failing_trash(_: Path):
+        raise RuntimeError("trash unavailable")
+
+    monkeypatch.setattr(runner, "_trash", failing_trash)
+
+    runner.run_pipeline(str(cfg), dry_run=False)
+
+    assert src.exists()
+    assert src.read_text(encoding="utf-8") == "new"
+    assert dest.exists()
+    assert dest.read_text(encoding="utf-8") == "old"

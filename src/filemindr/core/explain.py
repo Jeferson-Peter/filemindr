@@ -6,8 +6,8 @@ from typing import Any
 
 import yaml
 
+from filemindr.core.config import expand_path
 from filemindr.core.runner import (
-    _p,
     _load_rules,
     _match_rule,
     _resolve_conflict,
@@ -26,11 +26,11 @@ class ExplainResult:
     reason: str | None
 
 
-def _load_config(config_path: str) -> dict[str, Any]:
-    cfg_path = Path(config_path)
+def _load_config(config_path: str) -> tuple[Path, dict[str, Any]]:
+    cfg_path = Path(config_path).expanduser().resolve()
     if not cfg_path.exists():
         raise FileNotFoundError(config_path)
-    return yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    return cfg_path, yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
 
 
 def explain_files(
@@ -42,13 +42,14 @@ def explain_files(
     """
     Explain what would happen to each file. Does NOT move/copy anything.
     """
-    config = _load_config(config_path)
+    cfg_path, config = _load_config(config_path)
+    base_dir = cfg_path.parent
 
-    source = _p(config["source"]).resolve()
-    default_target = _p(config.get("default_target", str(source / "others"))).resolve()
+    source = expand_path(config["source"], base_dir=base_dir)
+    default_target = expand_path(config.get("default_target", str(source / "others")), base_dir=base_dir)
     global_policy = str(config.get("conflict_policy", "rename")).lower()
 
-    rules = _load_rules(config)
+    rules = _load_rules(config, base_dir=base_dir)
 
     results: list[ExplainResult] = []
 

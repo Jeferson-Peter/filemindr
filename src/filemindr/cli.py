@@ -5,7 +5,7 @@ import typer
 import yaml
 from loguru import logger
 
-from filemindr.core.config import resolve_profile_config, _expand
+from filemindr.core.config import resolve_profile_config, expand_path
 from filemindr.core.explain import explain_files, format_explain
 from filemindr.core.helpers import open_in_editor, open_with_default_app
 from filemindr.core.runner import run_pipeline
@@ -21,7 +21,14 @@ app.add_typer(profile_app, name="profile")
 
 def _setup_logger(level: str) -> None:
     logger.remove()
-    logger.add(sys.stdout, level=level.upper())
+    logger.add(
+        sys.stdout,
+        level=level.upper(),
+        colorize=True,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+               "<level>{level}</level> | "
+               "{message}",
+    )
 
 
 def _home() -> Path:
@@ -61,7 +68,7 @@ def watch(
     logger.info(f"Starting watch | profile={profile} config={config_path} dry_run={dry_run}")
 
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
-    source_dir = Path(cfg["source"]).expanduser()
+    source_dir = expand_path(cfg["source"], base_dir=Path(config_path).parent)
 
     opts = WatchOptions(debounce_ms=debounce_ms, stable_ms=stable_ms)
 
@@ -116,10 +123,10 @@ def validate(
     result = validate_config_file(Path(config_path))
 
     if result.ok:
-        logger.info("Config is valid ✅")
+        logger.info("Config is valid [OK]")
         raise typer.Exit(code=0)
 
-    logger.error("Config is invalid ❌")
+    logger.error("Config is invalid [ERROR]")
     for err in result.errors:
         logger.error(f"- {err}")
 
@@ -305,18 +312,18 @@ def doctor():
         rules_yaml = rules_dir / "rules.yaml"
 
         if not rules_dir.exists():
-            typer.echo(f"❌ {name}: profile directory not found -> {rules_dir}")
+            typer.echo(f"[ERROR] {name}: profile directory not found -> {rules_dir}")
             ok = False
             continue
 
         if not rules_yaml.exists():
-            typer.echo(f"❌ {name}: rules.yaml missing -> {rules_yaml}")
+            typer.echo(f"[ERROR] {name}: rules.yaml missing -> {rules_yaml}")
             ok = False
             continue
 
         result = validate_config_file(rules_yaml)
         if not result.ok:
-            typer.echo(f"❌ {name}: invalid config")
+            typer.echo(f"[ERROR] {name}: invalid config")
             for err in result.errors:
                 typer.echo(f"   - {err}")
             ok = False
@@ -326,23 +333,23 @@ def doctor():
         source = cfg.get("source")
         default_target = cfg.get("default_target")
 
-        source_path = _expand(source) if isinstance(source, str) else None
-        target_path = _expand(default_target) if isinstance(default_target, str) else None
+        source_path = expand_path(source, base_dir=rules_yaml.parent) if isinstance(source, str) else None
+        target_path = expand_path(default_target, base_dir=rules_yaml.parent) if isinstance(default_target, str) else None
 
         warn = False
 
         if source_path and not source_path.exists():
-            typer.echo(f"⚠ {name}: source does not exist -> {source_path}")
+            typer.echo(f"[WARN] {name}: source does not exist -> {source_path}")
             warn = True
 
         if target_path and not target_path.exists():
-            typer.echo(f"⚠ {name}: default_target does not exist -> {target_path}")
+            typer.echo(f"[WARN] {name}: default_target does not exist -> {target_path}")
             warn = True
 
         if warn:
-            typer.echo(f"✔ {name}: config valid (with warnings)")
+            typer.echo(f"[OK] {name}: config valid (with warnings)")
         else:
-            typer.echo(f"✔ {name}: OK")
+            typer.echo(f"[OK] {name}: OK")
 
     if not ok:
         raise typer.Exit(1)

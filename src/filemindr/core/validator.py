@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from filemindr.core.config import expand_path
+
 ALLOWED_POLICIES = {"rename", "skip", "overwrite", "trash"}
 
 
@@ -31,12 +33,14 @@ def validate_config_file(config_path: Path) -> ValidationResult:
     except Exception as e:
         return ValidationResult(ok=False, errors=[f"Invalid YAML: {e}"])
 
+    base_dir = config_path.parent.resolve()
+
     source_raw = config.get("source")
     if not source_raw or not isinstance(source_raw, str):
         errors.append("Missing required field: source (string)")
         return ValidationResult(ok=False, errors=errors)
 
-    source_dir = Path(source_raw).expanduser()
+    source_dir = expand_path(source_raw, base_dir=base_dir)
     if not source_dir.exists():
         errors.append(f"source directory does not exist: {source_dir}")
 
