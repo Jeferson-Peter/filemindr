@@ -153,36 +153,32 @@ jobs:
         run: |
           version="${{ needs.prepare.outputs.version }}"
           previous_tag="$(git tag --sort=-version:refname | grep -v "^v${version}$" | head -n 1)"
+          version_notes="release-notes/v${version}.md"
 
-          {
-            echo "## Highlights"
-            echo
-            echo "- Added template support for dynamic destination paths"
-            echo "- Added \`rename_template\` for dynamic output names"
-            echo "- Hardened watcher behavior, trash safety, and path resolution"
-            echo "- Automated publishing and GitHub Release flow"
-            echo
-            echo "## Validation"
-            echo
-            echo "- \`uv sync --extra dev\`"
-            echo "- \`uv run pytest -q\`"
-            echo
-            echo "## Install"
-            echo
-            echo "\`\`\`bash"
-            echo "pip install -U filemindr"
-            echo "\`\`\`"
-            echo
-            echo "## Distribution"
-            echo
-            echo "This release is published to PyPI. GitHub Release assets are not used as the distribution channel."
-            if [ -n "$previous_tag" ]; then
+          if [ -f "$version_notes" ]; then
+            cp "$version_notes" release-notes.md
+          else
+            {
+              echo "## Release"
+              echo
+              echo "This release is published to PyPI."
+              echo
+              echo "Install with:"
+              echo
+              echo "\`\`\`bash"
+              echo "pip install -U filemindr"
+              echo "\`\`\`"
+            } > release-notes.md
+          fi
+
+          if [ -n "$previous_tag" ]; then
+            {
               echo
               echo "## Full Changelog"
               echo
               echo "https://github.com/${{ github.repository }}/compare/${previous_tag}...v${version}"
-            fi
-          } > release-notes.md
+            } >> release-notes.md
+          fi
 
       - name: Create GitHub Release
         env:

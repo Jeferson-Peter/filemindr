@@ -362,6 +362,8 @@ Run tests:
 uv run pytest -q
 ```
 
+Release notes are versioned in the repository under `release-notes/` and consumed automatically by the publish workflow.
+
 ---
 
 ## Status
