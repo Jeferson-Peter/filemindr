@@ -337,6 +337,18 @@ Filemindr also prunes old history automatically on pipeline runs, keeping the la
 
 ---
 
+## Undo
+
+Undo one recorded run:
+
+```bash
+filemindr undo <run_id>
+```
+
+Undo v1 only reverts recorded move operations. It does not restore `trash`, `overwrite`, or `copy` events.
+
+---
+
 ## Conflict Policy
 
 Supported values:

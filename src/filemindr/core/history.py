@@ -205,3 +205,101 @@ def clear_history() -> int:
             day_dir.rmdir()
 
     return removed
+
+
+@dataclass(frozen=True)
+class UndoResult:
+    run_id: str
+    undo_run_id: str
+    reverted: int
+    skipped: int
+    errors: int
+
+
+def undo_run(run_id: str) -> UndoResult:
+    item = find_run(run_id)
+    if not item:
+        raise FileNotFoundError(run_id)
+
+    events = load_run_events(run_id)
+    move_events = [event for event in events if event.get("event") == "moved"]
+
+    history = HistoryWriter(
+        profile=item.get("profile"),
+        command="undo",
+        config_path=Path(item.get("config_path") or "."),
+        source=Path(item.get("source") or "."),
+        dry_run=False,
+    )
+
+    reverted = 0
+    skipped = 0
+    errors = 0
+
+    try:
+        for event in reversed(move_events):
+            current_path = Path(str(event["destination"]))
+            original_path = Path(str(event["source"]))
+
+            if not current_path.exists():
+                skipped += 1
+                history.record(
+                    {
+                        "event": "undo_skipped",
+                        "original_run_id": run_id,
+                        "reason": "missing_current_path",
+                        "source": str(current_path),
+                        "destination": str(original_path),
+                    }
+                )
+                continue
+
+            if original_path.exists():
+                skipped += 1
+                history.record(
+                    {
+                        "event": "undo_skipped",
+                        "original_run_id": run_id,
+                        "reason": "original_path_already_exists",
+                        "source": str(current_path),
+                        "destination": str(original_path),
+                    }
+                )
+                continue
+
+            try:
+                original_path.parent.mkdir(parents=True, exist_ok=True)
+                current_path.rename(original_path)
+                reverted += 1
+                history.record(
+                    {
+                        "event": "undo_moved",
+                        "original_run_id": run_id,
+                        "source": str(current_path),
+                        "destination": str(original_path),
+                    }
+                )
+            except Exception as exc:
+                errors += 1
+                history.record(
+                    {
+                        "event": "undo_error",
+                        "original_run_id": run_id,
+                        "source": str(current_path),
+                        "destination": str(original_path),
+                        "error": str(exc),
+                    }
+                )
+
+        history.complete()
+    except Exception as exc:
+        history.fail(str(exc))
+        raise
+
+    return UndoResult(
+        run_id=run_id,
+        undo_run_id=history.run.run_id,
+        reverted=reverted,
+        skipped=skipped,
+        errors=errors,
+    )
