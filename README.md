@@ -347,6 +347,14 @@ filemindr undo <run_id>
 
 Undo v1 only reverts recorded move operations. It does not restore `trash`, `overwrite`, or `copy` events.
 
+Example workflow:
+
+```bash
+filemindr run -p home
+filemindr history list
+filemindr undo <run_id>
+```
+
 ---
 
 ## Conflict Policy
@@ -380,7 +388,7 @@ Release notes are versioned in the repository under `release-notes/` and consume
 
 ## Status
 
-Current release line: `1.2.x`
+Current release line: `1.3.x`
 
 ---
 
