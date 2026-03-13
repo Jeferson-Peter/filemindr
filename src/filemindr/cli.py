@@ -7,7 +7,7 @@ from loguru import logger
 
 from filemindr.core.config import resolve_profile_config, expand_path
 from filemindr.core.explain import explain_files, format_explain
-from filemindr.core.history import clear_history, find_run, load_run_events, iter_run_meta, prune_history, retention_days_default
+from filemindr.core.history import clear_history, find_run, load_run_events, iter_run_meta, prune_history, retention_days_default, undo_run
 from filemindr.core.helpers import open_in_editor, open_with_default_app
 from filemindr.core.runner import run_pipeline
 from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
@@ -134,6 +134,20 @@ def validate(
         logger.error(f"- {err}")
 
     raise typer.Exit(code=1)
+
+
+@app.command()
+def undo(
+    run_id: str = typer.Argument(...),
+    log_level: str = typer.Option("INFO"),
+):
+    _setup_logger(log_level)
+
+    result = undo_run(run_id)
+    logger.info(f"Undo completed | original_run={result.run_id} undo_run={result.undo_run_id}")
+    logger.info(f"Reverted: {result.reverted}")
+    logger.info(f"Skipped: {result.skipped}")
+    logger.info(f"Errors: {result.errors}")
 
 
 @profile_app.command("init")

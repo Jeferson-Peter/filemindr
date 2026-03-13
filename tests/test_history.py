@@ -100,3 +100,45 @@ def test_history_clear_removes_all_runs(tmp_path: Path, fake_home: Path):
     out = (result.stdout or "") + (result.stderr or "")
     assert "Removed 1 run(s)." in out
     assert not run_dir.exists()
+
+
+def test_undo_reverts_moved_files(tmp_path: Path, fake_home: Path):
+    src = tmp_path / "Downloads"
+    src.mkdir()
+    original = src / "a.pdf"
+    original.write_text("x", encoding="utf-8")
+
+    rules = f"""
+source: {src.as_posix()}
+default_target: {src.as_posix()}/others
+conflict_policy: rename
+
+rules:
+  - name: documents
+    priority: 10
+    match:
+      extensions: ["pdf"]
+    action:
+      move_to: {src.as_posix()}/documents
+""".strip()
+    _write_profile(fake_home, "home", rules)
+
+    run_result = runner.invoke(app, ["run", "-p", "home"])
+    assert run_result.exit_code == 0, (run_result.stdout or "") + (run_result.stderr or "")
+
+    moved = src / "documents" / "a.pdf"
+    assert moved.exists()
+    assert not original.exists()
+
+    list_result = runner.invoke(app, ["history", "list"])
+    out = (list_result.stdout or "") + (list_result.stderr or "")
+    run_id = out.split("|", 1)[0].strip()
+
+    undo_result = runner.invoke(app, ["undo", run_id])
+    assert undo_result.exit_code == 0, (undo_result.stdout or "") + (undo_result.stderr or "")
+
+    assert original.exists()
+    assert not moved.exists()
+
+    undo_out = (undo_result.stdout or "") + (undo_result.stderr or "")
+    assert "Reverted: 1" in undo_out
