@@ -127,6 +127,8 @@ def test_watch_resolves_relative_source_from_config_dir(fake_home: Path, monkeyp
 source: inbox
 default_target: others
 conflict_policy: rename
+ignore:
+  - "*.tmp"
 
 rules:
   - name: images
@@ -140,11 +142,13 @@ rules:
 
     captured: dict[str, object] = {}
 
-    def fake_watch_and_run(*, source_dir: Path, config_path: str, dry_run: bool, opts, once: bool):
+    def fake_watch_and_run(*, source_dir: Path, config_path: str, dry_run: bool, opts, once: bool, profile=None):
         captured["source_dir"] = source_dir
         captured["config_path"] = config_path
         captured["dry_run"] = dry_run
+        captured["opts"] = opts
         captured["once"] = once
+        captured["profile"] = profile
 
     monkeypatch.setattr(cli, "watch_and_run", fake_watch_and_run)
 
@@ -153,3 +157,5 @@ rules:
     assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
     assert captured["source_dir"] == source_dir.resolve()
     assert captured["once"] is True
+    assert captured["profile"] == "home"
+    assert "*.tmp" in captured["opts"].ignore_patterns

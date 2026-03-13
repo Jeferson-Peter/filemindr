@@ -10,6 +10,7 @@ from threading import Event, Thread
 from loguru import logger
 from watchfiles import watch
 
+from filemindr.core.ignore import matches_ignore_pattern
 from filemindr.core.runner import run_pipeline
 
 
@@ -32,6 +33,7 @@ class WatchOptions:
 
     ignore_suffixes: set[str] = field(default_factory=lambda: set(DEFAULT_IGNORED_SUFFIXES))
     ignore_prefixes: set[str] = field(default_factory=lambda: set(DEFAULT_IGNORED_PREFIXES))
+    ignore_patterns: list[str] = field(default_factory=list)
 
     max_pending_paths: int = 10_000
     log_pending: bool = False
@@ -42,6 +44,8 @@ class WatchOptions:
 def _should_ignore(path: Path, opts: WatchOptions) -> bool:
     name = path.name.lower()
     if path.name.lower() == "filemindr.yaml":
+        return True
+    if matches_ignore_pattern(path, opts.ignore_patterns):
         return True
     for p in opts.ignore_prefixes:
         if name.startswith(p.lower()):

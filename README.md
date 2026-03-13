@@ -148,6 +148,16 @@ Important notes:
 - Rule priority matters. If two rules match the same file, the higher priority wins.
 - `rename_template` only defines the final file name, not folders.
 - `move_to` and `copy_to` can use templates in the destination path.
+- `ignore` accepts glob-style patterns and skips matching files in `run`, `watch`, and `explain`.
+
+Example ignore rules:
+
+```yaml
+ignore:
+  - "*.tmp"
+  - "*.crdownload"
+  - "~$*"
+```
 
 Supported template fields:
 

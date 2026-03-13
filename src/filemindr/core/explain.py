@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from filemindr.core.config import expand_path
+from filemindr.core.ignore import load_ignore_patterns, matches_ignore_pattern
 from filemindr.core.runner import (
     Rule,
     _load_rules,
@@ -73,6 +74,7 @@ def explain_files(
     source = expand_path(config["source"], base_dir=base_dir)
     default_target = str(config.get("default_target", str(source / "others")))
     global_policy = str(config.get("conflict_policy", "rename")).lower()
+    ignore_patterns = load_ignore_patterns(config)
 
     rules = _load_rules(config, base_dir=base_dir)
 
@@ -96,6 +98,25 @@ def explain_files(
                     rename_template=None,
                     rendered_name=f.name,
                     reason="not_found_or_not_file" if verbose else None,
+                )
+            )
+            continue
+
+        if matches_ignore_pattern(f, ignore_patterns):
+            results.append(
+                ExplainResult(
+                    file=f,
+                    action="SKIP",
+                    rule_name="ignored",
+                    rule_priority=None,
+                    policy=global_policy,
+                    dest=f,
+                    resolved=None,
+                    matched_rules=[],
+                    target_template=None,
+                    rename_template=None,
+                    rendered_name=f.name,
+                    reason="ignored_by_pattern" if verbose else None,
                 )
             )
             continue

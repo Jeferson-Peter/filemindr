@@ -13,6 +13,7 @@ from loguru import logger
 
 from filemindr.core.config import expand_path
 from filemindr.core.history import HistoryWriter, prune_history, retention_days_default
+from filemindr.core.ignore import load_ignore_patterns, matches_ignore_pattern
 from filemindr.core.templating import render_name_template, render_target_template
 
 
@@ -184,6 +185,7 @@ def run_pipeline(
     source = _p(config["source"], base_dir=base_dir)
     default_target = str(config.get("default_target", str(source / "others")))
     global_policy = str(config.get("conflict_policy", "rename"))
+    ignore_patterns = load_ignore_patterns(config)
     rules = _load_rules(config, base_dir=base_dir)
     history: HistoryWriter | None = None
     if profile and command in {"run", "watch"}:
@@ -213,6 +215,9 @@ def run_pipeline(
             if not file.is_file():
                 continue
             if file.resolve() == cfg_abs:
+                continue
+            if matches_ignore_pattern(file, ignore_patterns):
+                logger.debug(f"IGNORE: {file}")
                 continue
             if only_paths is not None and file not in only_paths:
                 continue

@@ -178,3 +178,35 @@ def test_pipeline_renders_stem_safe_template(tmp_path: Path):
     expected = tmp_path / "organized" / "day-trade-2025-final_2024-05.pdf"
     assert expected.exists()
     assert not file.exists()
+
+
+def test_pipeline_skips_files_matching_ignore_patterns(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+
+    ignored = src / "report.tmp"
+    ignored.write_text("tmp", encoding="utf-8")
+    kept = src / "report.pdf"
+    kept.write_text("pdf", encoding="utf-8")
+
+    cfg = {
+        "source": str(src),
+        "default_target": str(tmp_path / "others"),
+        "ignore": ["*.tmp"],
+        "rules": [
+            {
+                "name": "documents",
+                "priority": 20,
+                "match": {"extensions": ["pdf", "tmp"]},
+                "action": {"move_to": str(tmp_path / "docs")},
+            },
+        ],
+    }
+
+    cfg_path = tmp_path / "filemindr.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    run_pipeline(str(cfg_path), dry_run=False)
+
+    assert ignored.exists()
+    assert (tmp_path / "docs" / "report.pdf").exists()
