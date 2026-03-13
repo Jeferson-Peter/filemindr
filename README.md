@@ -27,6 +27,7 @@ Built as a learning and portfolio project with strong focus on:
   - `move_to`
   - `copy_to`
   - `rename_template`
+  - `stem_safe` placeholder support
 - Global and per-rule conflict policies:
   - `rename`
   - `skip`
@@ -35,6 +36,7 @@ Built as a learning and portfolio project with strong focus on:
 - Dry-run mode
 - Explain mode
 - Watch mode
+- Run history with `list`, `show`, `prune`, and `clear`
 - Final summary report
 - Structured logging with `INFO` and `DEBUG`
 - Cross-platform support for Windows, macOS, and Linux
@@ -97,10 +99,10 @@ This creates:
 
 ```text
 ~/.filemindr/
-├── profiles.yaml
-└── rules/
-    └── home/
-        └── rules.yaml
+|-- profiles.yaml
+`-- rules/
+    `-- home/
+        `-- rules.yaml
 ```
 
 Open and edit the rules:
@@ -151,6 +153,7 @@ Supported template fields:
 
 - `{name}`
 - `{stem}`
+- `{stem_safe}`
 - `{suffix}`
 - `{ext}`
 - `{parent}`
@@ -242,6 +245,24 @@ Explain a single file with spaces in the path:
 filemindr explain -p home "C:\Users\you\Downloads\Day Trade-2025.pdf"
 ```
 
+Explain with more detail about matched rules, templates, and rendered names:
+
+```bash
+filemindr explain -p home "C:\Users\you\Downloads\Day Trade-2025.pdf" --verbose
+```
+
+Example output:
+
+```text
+Day Trade-2025.pdf -> C:\Users\you\Downloads\archive\2026\03\day-trade-2025_2026-03.pdf [MOVE] rule=dated-pdfs prio=70 policy=rename (source=C:\Users\you\Downloads ext=.pdf matched_rule=dated-pdfs matched_candidates=dated-pdfs(prio=70) target_template=~/Downloads/archive/{yyyy}/{mm} rename_template={stem_safe}_{yyyy}-{mm}{suffix} rendered_name=day-trade-2025_2026-03.pdf dest_exists=NO conflict=none)
+```
+
+Example of a normalized file name:
+
+```yaml
+rename_template: "{stem_safe}_{yyyy}-{mm}{suffix}"
+```
+
 ---
 
 ## Validate
@@ -257,6 +278,62 @@ filemindr validate -p home
 ```bash
 filemindr doctor
 ```
+
+---
+
+## History
+
+List recent runs:
+
+```bash
+filemindr history list
+```
+
+Include legacy/internal entries too:
+
+```bash
+filemindr history list --all
+```
+
+Inspect one run:
+
+```bash
+filemindr history show <run_id>
+```
+
+Example output:
+
+```text
+run_id:      5ffb71382410
+command:     run
+profile:     home
+status:      completed
+dry_run:     True
+started_at:  2026-03-13T16:54:18.073692+00:00
+finished_at: 2026-03-13T16:54:18.115000+00:00
+source:      C:\Users\you\Downloads
+config_path: C:\Users\you\.filemindr\rules\home\rules.yaml
+
+counts:
+  planned_move: 55
+
+events:
+  - planned_move: C:\Users\you\Downloads\Day Trade-2025.pdf -> C:\Users\you\Downloads\archive\2026\03\day-trade-2025_2026-03.pdf
+```
+
+Prune old history entries:
+
+```bash
+filemindr history prune --days 7
+```
+
+Clear all stored history:
+
+```bash
+filemindr history clear --yes
+```
+
+Filemindr also prunes old history automatically on pipeline runs, keeping the last 7 days by default.
 
 ---
 
@@ -289,7 +366,7 @@ uv run pytest -q
 
 ## Status
 
-Current release line: `1.1.x`
+Current release line: `1.2.x`
 
 ---
 

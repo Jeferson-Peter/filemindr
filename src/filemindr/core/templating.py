@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from string import Formatter
@@ -9,6 +10,7 @@ from filemindr.core.config import expand_path
 ALLOWED_TEMPLATE_FIELDS = {
     "name",
     "stem",
+    "stem_safe",
     "suffix",
     "ext",
     "parent",
@@ -40,9 +42,11 @@ def template_syntax_error(template: str) -> str | None:
 
 def template_context(file: Path) -> dict[str, str]:
     stamp = datetime.fromtimestamp(file.stat().st_mtime)
+    stem_safe = re.sub(r"[^a-z0-9]+", "-", file.stem.lower()).strip("-")
     return {
         "name": file.name,
         "stem": file.stem,
+        "stem_safe": stem_safe or "file",
         "suffix": file.suffix,
         "ext": file.suffix.lstrip(".").lower(),
         "parent": file.parent.name,

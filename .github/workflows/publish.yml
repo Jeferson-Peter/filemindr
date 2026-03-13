@@ -143,8 +143,52 @@ jobs:
       contents: write
 
     steps:
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Checkout
+        uses: actions/checkout@v5
         with:
-          tag_name: v${{ needs.prepare.outputs.version }}
-          generate_release_notes: true
+          fetch-depth: 0
+
+      - name: Build release notes
+        shell: bash
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          previous_tag="$(git tag --sort=-version:refname | grep -v "^v${version}$" | head -n 1)"
+
+          {
+            echo "## Highlights"
+            echo
+            echo "- Added template support for dynamic destination paths"
+            echo "- Added \`rename_template\` for dynamic output names"
+            echo "- Hardened watcher behavior, trash safety, and path resolution"
+            echo "- Automated publishing and GitHub Release flow"
+            echo
+            echo "## Validation"
+            echo
+            echo "- \`uv sync --extra dev\`"
+            echo "- \`uv run pytest -q\`"
+            echo
+            echo "## Install"
+            echo
+            echo "\`\`\`bash"
+            echo "pip install -U filemindr"
+            echo "\`\`\`"
+            echo
+            echo "## Distribution"
+            echo
+            echo "This release is published to PyPI. GitHub Release assets are not used as the distribution channel."
+            if [ -n "$previous_tag" ]; then
+              echo
+              echo "## Full Changelog"
+              echo
+              echo "https://github.com/${{ github.repository }}/compare/${previous_tag}...v${version}"
+            fi
+          } > release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "v${{ needs.prepare.outputs.version }}" \
+            --notes-file release-notes.md \
+            --title "v${{ needs.prepare.outputs.version }}"

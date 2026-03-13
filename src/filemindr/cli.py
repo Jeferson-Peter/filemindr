@@ -7,6 +7,7 @@ from loguru import logger
 
 from filemindr.core.config import resolve_profile_config, expand_path
 from filemindr.core.explain import explain_files, format_explain
+from filemindr.core.history import clear_history, find_run, load_run_events, iter_run_meta, prune_history, retention_days_default
 from filemindr.core.helpers import open_in_editor, open_with_default_app
 from filemindr.core.runner import run_pipeline
 from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
@@ -16,7 +17,9 @@ from filemindr.core.watcher import WatchOptions, watch_and_run
 
 app = typer.Typer(help="Declarative local file pipelines")
 profile_app = typer.Typer(help="Manage profiles")
+history_app = typer.Typer(help="Inspect pipeline history")
 app.add_typer(profile_app, name="profile")
+app.add_typer(history_app, name="history")
 
 
 def _setup_logger(level: str) -> None:
@@ -50,7 +53,7 @@ def run(
     config_path = resolve_profile_config(profile)
     logger.info(f"Running pipeline | profile={profile} config={config_path} dry_run={dry_run}")
 
-    run_pipeline(str(config_path), dry_run)
+    run_pipeline(str(config_path), dry_run, profile=profile, command="run")
 
 
 @app.command()
@@ -169,6 +172,77 @@ def profile_init(
     typer.echo(f"Profile '{name}' created.")
     typer.echo(f"Rules: {rules_yaml}")
     typer.echo(f"Registered in {profiles_file}")
+
+
+@history_app.command("list")
+def history_list(
+    limit: int = typer.Option(20, "--limit", "-n"),
+    all_runs: bool = typer.Option(False, "--all", help="Include legacy/internal runs without a command label"),
+):
+    items = iter_run_meta()
+    if not all_runs:
+        items = [item for item in items if item.get("command")]
+    if not items:
+        typer.echo("No history found.")
+        raise typer.Exit()
+
+    for item in items[:limit]:
+        typer.echo(
+            f"{item['run_id']} | command={item.get('command') or '-'} | profile={item.get('profile') or '-'} | "
+            f"status={item.get('status')} | dry_run={item.get('dry_run')} | "
+            f"started_at={item.get('started_at')}"
+        )
+
+
+@history_app.command("show")
+def history_show(run_id: str = typer.Argument(...)):
+    item = find_run(run_id)
+    if not item:
+        typer.echo(f"Run '{run_id}' not found.")
+        raise typer.Exit(1)
+
+    typer.echo(f"run_id:      {item.get('run_id')}")
+    typer.echo(f"command:     {item.get('command') or '-'}")
+    typer.echo(f"profile:     {item.get('profile') or '-'}")
+    typer.echo(f"status:      {item.get('status')}")
+    typer.echo(f"dry_run:     {item.get('dry_run')}")
+    typer.echo(f"started_at:  {item.get('started_at')}")
+    typer.echo(f"finished_at: {item.get('finished_at')}")
+    typer.echo(f"source:      {item.get('source')}")
+    typer.echo(f"config_path: {item.get('config_path')}")
+    typer.echo("")
+    typer.echo("counts:")
+    for key, value in sorted((item.get("counts") or {}).items()):
+        typer.echo(f"  {key}: {value}")
+
+    events = load_run_events(run_id)
+    if not events:
+        return
+
+    typer.echo("")
+    typer.echo("events:")
+    for event in events:
+        event_name = event.get("event")
+        source = event.get("source") or event.get("path") or "-"
+        destination = event.get("destination") or "-"
+        typer.echo(f"  - {event_name}: {source} -> {destination}")
+
+
+@history_app.command("prune")
+def history_prune(days: int = typer.Option(retention_days_default(), "--days")):
+    removed = prune_history(days=days)
+    typer.echo(f"Removed {removed} run(s).")
+
+
+@history_app.command("clear")
+def history_clear(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    if not yes and not typer.confirm("Delete all stored history entries?"):
+        raise typer.Exit()
+
+    removed = clear_history()
+    typer.echo(f"Removed {removed} run(s).")
 
 
 @profile_app.command("list")
