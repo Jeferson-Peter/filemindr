@@ -168,3 +168,31 @@ rules:
     assert "target_template=" in out
     assert "rename_template={stem}_{yyyy}-{mm}{suffix}" in out
     assert "rendered_name=pic_2024-05.jpg" in out
+
+
+def test_explain_renders_stem_safe_template(tmp_path: Path, fake_home: Path, runner: CliRunner):
+    rules = f"""
+source: {tmp_path.as_posix()}
+default_target: {tmp_path.as_posix()}/others
+conflict_policy: rename
+
+rules:
+  - name: documents
+    priority: 50
+    match:
+      extensions: ["pdf"]
+    action:
+      move_to: {tmp_path.as_posix()}/documents
+      rename_template: "{{stem_safe}}_{{yyyy}}-{{mm}}{{suffix}}"
+""".lstrip()
+    _write_profile(fake_home, "home", rules)
+
+    doc = tmp_path / "Day Trade 2025 (Final).pdf"
+    doc.write_text("x", encoding="utf-8")
+    os.utime(doc, (1715904000, 1715904000))
+
+    result = runner.invoke(app, ["explain", str(doc), "-p", "home"])
+    assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
+
+    out = ((result.stdout or "") + (result.stderr or "")).replace("\\", "/")
+    assert "documents/day-trade-2025-final_2024-05.pdf" in out

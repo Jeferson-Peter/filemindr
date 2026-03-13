@@ -151,6 +151,7 @@ Supported template fields:
 
 - `{name}`
 - `{stem}`
+- `{stem_safe}`
 - `{suffix}`
 - `{ext}`
 - `{parent}`
@@ -246,6 +247,12 @@ Explain with more detail about matched rules, templates, and rendered names:
 
 ```bash
 filemindr explain -p home "C:\Users\you\Downloads\Day Trade-2025.pdf" --verbose
+```
+
+Example of a normalized file name:
+
+```yaml
+rename_template: "{stem_safe}_{yyyy}-{mm}{suffix}"
 ```
 
 ---
