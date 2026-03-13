@@ -95,6 +95,7 @@ def watch_and_run(
     opts: WatchOptions | None = None,
     *,
     once: bool = False,
+    profile: str | None = None,
 ) -> None:
     opts = opts or WatchOptions()
     source_dir = source_dir.expanduser().resolve()
@@ -160,7 +161,16 @@ def watch_and_run(
         if ready:
             logger.info(f"Detected stable changes ({len(ready)} paths). Running pipeline...")
             try:
-                run_pipeline(config_path, dry_run=dry_run, only_paths=ready)
+                if profile:
+                    run_pipeline(
+                        config_path,
+                        dry_run=dry_run,
+                        only_paths=ready,
+                        profile=profile,
+                        command="watch",
+                    )
+                else:
+                    run_pipeline(config_path, dry_run=dry_run, only_paths=ready)
             except KeyboardInterrupt:
                 stop_event.set()
                 logger.info("Pipeline interrupted by user.")

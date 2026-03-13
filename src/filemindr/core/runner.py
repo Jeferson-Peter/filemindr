@@ -12,6 +12,7 @@ import yaml
 from loguru import logger
 
 from filemindr.core.config import expand_path
+from filemindr.core.history import HistoryWriter, prune_history, retention_days_default
 from filemindr.core.templating import render_name_template, render_target_template
 
 
@@ -165,7 +166,14 @@ def _resolve_destination(
     return dest_dir / file_name
 
 
-def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] | None = None) -> None:
+def run_pipeline(
+    config_path: str,
+    dry_run: bool = False,
+    only_paths: set[Path] | None = None,
+    *,
+    profile: str | None = None,
+    command: str | None = None,
+) -> None:
     cfg_abs = Path(config_path).expanduser().resolve()
     if not cfg_abs.exists():
         raise FileNotFoundError(config_path)
@@ -177,6 +185,16 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
     default_target = str(config.get("default_target", str(source / "others")))
     global_policy = str(config.get("conflict_policy", "rename"))
     rules = _load_rules(config, base_dir=base_dir)
+    history: HistoryWriter | None = None
+    if profile and command in {"run", "watch"}:
+        prune_history(days=retention_days_default())
+        history = HistoryWriter(
+            profile=profile,
+            command=command,
+            config_path=cfg_abs,
+            source=source,
+            dry_run=dry_run,
+        )
 
     total_files = 0
     moved = 0
@@ -190,72 +208,150 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
 
     logger.info(f"Scanning: {source}")
 
-    for file in source.iterdir():
-        if not file.is_file():
-            continue
-        if file.resolve() == cfg_abs:
-            continue
-        if only_paths is not None and file not in only_paths:
-            continue
+    try:
+        for file in source.iterdir():
+            if not file.is_file():
+                continue
+            if file.resolve() == cfg_abs:
+                continue
+            if only_paths is not None and file not in only_paths:
+                continue
 
-        total_files += 1
+            total_files += 1
 
-        rule = _match_rule(file, rules)
-        rule_name = rule.name if rule else "default"
-        dest = _resolve_destination(file, rule, default_target=default_target, base_dir=base_dir)
+            rule = _match_rule(file, rules)
+            rule_name = rule.name if rule else "default"
+            dest = _resolve_destination(file, rule, default_target=default_target, base_dir=base_dir)
 
-        policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy).lower()
-        resolved = _resolve_conflict(dest, policy)
-        if resolved is None:
-            skipped += 1
-            by_rule[rule_name] += 1
-            by_action["skipped"] += 1
-            logger.debug(f"SKIP (exists): {dest}")
-            continue
+            policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy).lower()
+            resolved = _resolve_conflict(dest, policy)
+            if resolved is None:
+                skipped += 1
+                by_rule[rule_name] += 1
+                by_action["skipped"] += 1
+                if history:
+                    history.record(
+                        {
+                            "event": "skipped",
+                            "rule": rule_name,
+                            "policy": policy,
+                            "source": str(file),
+                            "destination": str(dest),
+                        }
+                    )
+                logger.debug(f"SKIP (exists): {dest}")
+                continue
 
-        action_name = _action_name(rule)
-        chosen = _log_rule_choice(rule)
-        will_replace = resolved.exists() and policy in {"overwrite", "trash"}
+            action_name = _action_name(rule)
+            chosen = _log_rule_choice(rule)
+            will_replace = resolved.exists() and policy in {"overwrite", "trash"}
 
-        if dry_run:
-            logger.debug(f"[DRY] ensure dir: {resolved.parent}")
+            if dry_run:
+                logger.debug(f"[DRY] ensure dir: {resolved.parent}")
 
-        if dry_run:
-            by_rule[rule_name] += 1
-            if action_name == "COPY":
-                by_action["planned_copies"] += 1
-            else:
-                by_action["planned_moves"] += 1
-            logger.debug(f"[DRY] {action_name} {chosen} | {file} -> {resolved}")
-            continue
-
-        try:
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-
-            if will_replace:
-                if policy == "trash":
-                    _trash(resolved)
-                    by_action["trashed"] += 1
+            if dry_run:
+                by_rule[rule_name] += 1
+                if action_name == "COPY":
+                    by_action["planned_copies"] += 1
                 else:
-                    resolved.unlink()
-                    overwritten += 1
-                    by_action["overwritten"] += 1
+                    by_action["planned_moves"] += 1
+                if history:
+                    history.record(
+                        {
+                            "event": "planned_copy" if action_name == "COPY" else "planned_move",
+                            "rule": rule_name,
+                            "policy": policy,
+                            "source": str(file),
+                            "destination": str(resolved),
+                        }
+                    )
+                logger.debug(f"[DRY] {action_name} {chosen} | {file} -> {resolved}")
+                continue
 
-            if action_name == "COPY":
-                shutil.copy2(file, resolved)
-                copied += 1
-                by_action["copied"] += 1
-            else:
-                file.rename(resolved)
-                moved += 1
-                by_action["moved"] += 1
+            try:
+                resolved.parent.mkdir(parents=True, exist_ok=True)
 
-            by_rule[rule_name] += 1
-            logger.debug(f"{action_name} {chosen} | {file} -> {resolved}")
-        except Exception as e:
-            errors += 1
-            by_action["errors"] += 1
-            logger.exception(f"ERROR moving {file} -> {resolved}: {e}")
+                if will_replace:
+                    if policy == "trash":
+                        _trash(resolved)
+                        by_action["trashed"] += 1
+                        if history:
+                            history.record(
+                                {
+                                    "event": "trashed",
+                                    "rule": rule_name,
+                                    "policy": policy,
+                                    "path": str(resolved),
+                                    "undo_supported": False,
+                                }
+                            )
+                    else:
+                        resolved.unlink()
+                        overwritten += 1
+                        by_action["overwritten"] += 1
+                        if history:
+                            history.record(
+                                {
+                                    "event": "overwritten",
+                                    "rule": rule_name,
+                                    "policy": policy,
+                                    "path": str(resolved),
+                                    "undo_supported": False,
+                                }
+                            )
+
+                if action_name == "COPY":
+                    shutil.copy2(file, resolved)
+                    copied += 1
+                    by_action["copied"] += 1
+                    if history:
+                        history.record(
+                            {
+                                "event": "copied",
+                                "rule": rule_name,
+                                "policy": policy,
+                                "source": str(file),
+                                "destination": str(resolved),
+                                "undo_supported": False,
+                            }
+                        )
+                else:
+                    file.rename(resolved)
+                    moved += 1
+                    by_action["moved"] += 1
+                    if history:
+                        history.record(
+                            {
+                                "event": "moved",
+                                "rule": rule_name,
+                                "policy": policy,
+                                "source": str(file),
+                                "destination": str(resolved),
+                                "undo_supported": True,
+                            }
+                        )
+
+                by_rule[rule_name] += 1
+                logger.debug(f"{action_name} {chosen} | {file} -> {resolved}")
+            except Exception as e:
+                errors += 1
+                by_action["errors"] += 1
+                if history:
+                    history.record(
+                        {
+                            "event": "error",
+                            "rule": rule_name,
+                            "policy": policy,
+                            "source": str(file),
+                            "destination": str(resolved),
+                            "error": str(e),
+                        }
+                    )
+                logger.exception(f"ERROR moving {file} -> {resolved}: {e}")
+    except Exception as exc:
+        if history:
+            history.fail(str(exc))
+        raise
 
     logger.info("==== SUMMARY ====")
     logger.info(f"Dry-run: {dry_run}")
@@ -275,3 +371,6 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
     logger.info("By rule:")
     for rule_name, count in by_rule.most_common():
         logger.info(f"  - {rule_name}: {count}")
+
+    if history:
+        history.complete()

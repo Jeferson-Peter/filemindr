@@ -273,6 +273,42 @@ filemindr doctor
 
 ---
 
+## History
+
+List recent runs:
+
+```bash
+filemindr history list
+```
+
+Include legacy/internal entries too:
+
+```bash
+filemindr history list --all
+```
+
+Inspect one run:
+
+```bash
+filemindr history show <run_id>
+```
+
+Prune old history entries:
+
+```bash
+filemindr history prune --days 7
+```
+
+Clear all stored history:
+
+```bash
+filemindr history clear --yes
+```
+
+Filemindr also prunes old history automatically on pipeline runs, keeping the last 7 days by default.
+
+---
+
 ## Conflict Policy
 
 Supported values:
