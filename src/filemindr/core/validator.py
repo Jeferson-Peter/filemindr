@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from filemindr.core.config import expand_path
+from filemindr.core.templating import invalid_template_fields, template_syntax_error
 
 ALLOWED_POLICIES = {"rename", "skip", "overwrite", "trash"}
 
@@ -115,11 +116,51 @@ def validate_config_file(config_path: Path) -> ValidationResult:
 
         move_to = action.get("move_to")
         copy_to = action.get("copy_to")
+        rename_template = action.get("rename_template")
 
         if bool(move_to) == bool(copy_to):
             errors.append(
                 f"Rule '{name}': must define exactly one of action.move_to or action.copy_to"
             )
+
+        for field_name, value in (("action.move_to", move_to), ("action.copy_to", copy_to)):
+            if value is not None and not isinstance(value, str):
+                errors.append(f"Rule '{name}': {field_name} must be a string")
+                continue
+
+            if isinstance(value, str):
+                syntax_error = template_syntax_error(value)
+                if syntax_error:
+                    errors.append(f"Rule '{name}': {field_name} has invalid template syntax: {syntax_error}")
+                    continue
+
+                invalid = sorted(invalid_template_fields(value))
+                if invalid:
+                    errors.append(
+                        f"Rule '{name}': {field_name} uses unsupported template fields: {', '.join(invalid)}"
+                    )
+
+        if rename_template is not None:
+            if not isinstance(rename_template, str):
+                errors.append(f"Rule '{name}': action.rename_template must be a string")
+            else:
+                syntax_error = template_syntax_error(rename_template)
+                if syntax_error:
+                    errors.append(
+                        f"Rule '{name}': action.rename_template has invalid template syntax: {syntax_error}"
+                    )
+                    continue
+
+                invalid = sorted(invalid_template_fields(rename_template))
+                if invalid:
+                    errors.append(
+                        f"Rule '{name}': action.rename_template uses unsupported template fields: {', '.join(invalid)}"
+                    )
+
+                if "/" in rename_template or "\\" in rename_template:
+                    errors.append(
+                        f"Rule '{name}': action.rename_template must only define a file name, not a path"
+                    )
 
         rule_policy = action.get("conflict_policy")
         if rule_policy is not None:

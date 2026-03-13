@@ -102,3 +102,31 @@ def test_explain_all_disables_limit(tmp_path: Path, fake_home: Path, runner: Cli
     assert "f000.txt" in out
     assert "f059.txt" in out
     assert "Showing first" not in out
+
+
+def test_explain_renders_target_and_rename_templates(tmp_path: Path, fake_home: Path, runner: CliRunner):
+    rules = f"""
+source: {tmp_path.as_posix()}
+default_target: {tmp_path.as_posix()}/others
+conflict_policy: rename
+
+rules:
+  - name: images
+    priority: 50
+    match:
+      extensions: ["jpg"]
+    action:
+      move_to: {tmp_path.as_posix()}/images/{{yyyy}}/{{mm}}
+      rename_template: "{{stem}}_{{yyyy}}-{{mm}}{{suffix}}"
+""".lstrip()
+    _write_profile(fake_home, "home", rules)
+
+    pic = tmp_path / "pic.jpg"
+    pic.write_text("x", encoding="utf-8")
+    os.utime(pic, (1715904000, 1715904000))
+
+    result = runner.invoke(app, ["explain", str(pic), "-p", "home"])
+    assert result.exit_code == 0, (result.stdout or "") + (result.stderr or "")
+
+    out = (result.stdout or "") + (result.stderr or "")
+    assert "images/2024/05/pic_2024-05.jpg" in out.replace("\\", "/")

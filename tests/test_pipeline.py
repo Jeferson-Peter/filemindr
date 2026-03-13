@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import yaml
 
@@ -109,3 +110,37 @@ def test_dry_run_summary_distinguishes_planned_moves_and_copies(tmp_path: Path, 
 
     assert "Planned moves: 1" in messages
     assert "Planned copies: 1" in messages
+
+
+def test_pipeline_renders_target_and_rename_templates(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+
+    file = src / "report.PDF"
+    file.write_text("pdf", encoding="utf-8")
+    os.utime(file, (1715904000, 1715904000))
+
+    cfg = {
+        "source": str(src),
+        "default_target": str(tmp_path / "others"),
+        "rules": [
+            {
+                "name": "documents",
+                "priority": 20,
+                "match": {"extensions": ["pdf"]},
+                "action": {
+                    "move_to": str(tmp_path / "organized" / "{ext}" / "{yyyy}" / "{mm}"),
+                    "rename_template": "{stem}_{yyyy}-{mm}{suffix}",
+                },
+            },
+        ],
+    }
+
+    cfg_path = tmp_path / "filemindr.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    run_pipeline(str(cfg_path), dry_run=False)
+
+    expected = tmp_path / "organized" / "pdf" / "2024" / "05" / "report_2024-05.PDF"
+    assert expected.exists()
+    assert not file.exists()

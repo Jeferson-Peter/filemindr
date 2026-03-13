@@ -10,6 +10,7 @@ from filemindr.core.config import expand_path
 from filemindr.core.runner import (
     _load_rules,
     _match_rule,
+    _resolve_destination,
     _resolve_conflict,
 )
 
@@ -46,7 +47,7 @@ def explain_files(
     base_dir = cfg_path.parent
 
     source = expand_path(config["source"], base_dir=base_dir)
-    default_target = expand_path(config.get("default_target", str(source / "others")), base_dir=base_dir)
+    default_target = str(config.get("default_target", str(source / "others")))
     global_policy = str(config.get("conflict_policy", "rename")).lower()
 
     rules = _load_rules(config, base_dir=base_dir)
@@ -76,14 +77,11 @@ def explain_files(
         rule_name = rule.name if rule else "default"
         rule_priority = rule.priority if rule else None
 
-        dest_dir = (rule.copy_to or rule.move_to) if rule else default_target
-        dest_dir = dest_dir.resolve()
-
         action = "COPY" if (rule and rule.copy_to) else "MOVE"
 
         policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy).lower()
 
-        dest = dest_dir / f.name
+        dest = _resolve_destination(f, rule, default_target=default_target, base_dir=base_dir)
         resolved = _resolve_conflict(dest, policy)
 
         reason = None
