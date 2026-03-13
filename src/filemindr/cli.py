@@ -47,6 +47,7 @@ def _profiles_file() -> Path:
 def run(
     profile: str = typer.Option(..., "--profile", "-p"),
     dry_run: bool = False,
+    report: Path | None = typer.Option(None, "--report", help="Write a JSON execution report to this path"),
     log_level: str = typer.Option("INFO"),
 ):
     _setup_logger(log_level)
@@ -54,7 +55,7 @@ def run(
     config_path = resolve_profile_config(profile)
     logger.info(f"Running pipeline | profile={profile} config={config_path} dry_run={dry_run}")
 
-    run_pipeline(str(config_path), dry_run, profile=profile, command="run")
+    run_pipeline(str(config_path), dry_run, profile=profile, command="run", report_path=report)
 
 
 @app.command()

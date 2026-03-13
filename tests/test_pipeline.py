@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 import yaml
 
@@ -210,3 +211,34 @@ def test_pipeline_skips_files_matching_ignore_patterns(tmp_path: Path):
 
     assert ignored.exists()
     assert (tmp_path / "docs" / "report.pdf").exists()
+
+
+def test_pipeline_writes_json_report(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.pdf").write_text("pdf", encoding="utf-8")
+
+    cfg = {
+        "source": str(src),
+        "default_target": str(tmp_path / "others"),
+        "rules": [
+            {
+                "name": "documents",
+                "priority": 20,
+                "match": {"extensions": ["pdf"]},
+                "action": {"move_to": str(tmp_path / "docs")},
+            },
+        ],
+    }
+
+    cfg_path = tmp_path / "filemindr.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    report_path = tmp_path / "reports" / "run.json"
+    run_pipeline(str(cfg_path), dry_run=False, report_path=report_path)
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["files_scanned"] == 1
+    assert payload["summary"]["moved"] == 1
+    assert payload["by_rule"]["documents"] == 1
+    assert payload["events"][0]["event"] == "moved"

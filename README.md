@@ -34,6 +34,7 @@ Built as a learning and portfolio project with strong focus on:
   - `overwrite`
   - `trash`
 - Dry-run mode
+- JSON execution reports
 - Explain mode
 - Watch mode
 - Run history with `list`, `show`, `prune`, and `clear`
@@ -187,6 +188,12 @@ Run:
 
 ```bash
 filemindr run -p home
+```
+
+Write a JSON report:
+
+```bash
+filemindr run -p home --report report.json
 ```
 
 ---
