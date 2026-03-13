@@ -30,6 +30,7 @@ Built as a learning + portfolio project with strong focus on:
 -   Actions:
     -   `move_to`
     -   `copy_to`
+    -   `rename_template`
 -   Global and per-rule conflict policies:
     -   `rename`
     -   `skip`
@@ -126,7 +127,26 @@ rules:
       extensions: ["jpg", "png", "webp"]
     action:
       move_to: ~/Downloads/images
+
+  - name: dated-pdfs
+    priority: 30
+    match:
+      extensions: ["pdf"]
+    action:
+      move_to: ~/Downloads/archive/{yyyy}/{mm}
+      rename_template: "{stem}_{yyyy}-{mm}{suffix}"
 ```
+
+Supported template fields:
+
+-   `{name}`
+-   `{stem}`
+-   `{suffix}`
+-   `{ext}`
+-   `{parent}`
+-   `{yyyy}`
+-   `{mm}`
+-   `{dd}`
 
 Preview:
 

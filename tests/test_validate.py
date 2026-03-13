@@ -129,3 +129,34 @@ rules:
 
     out = ((result.stdout or "") + (result.stderr or "")).lower()
     assert "move_to" in out and "copy_to" in out
+
+
+def test_validate_rejects_invalid_rename_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake_home = tmp_path / "home"
+    _fake_home(monkeypatch, fake_home)
+
+    src = tmp_path / "Downloads"
+    src.mkdir()
+    src_s = src.as_posix()
+
+    rules = f"""
+source: {src_s}
+
+rules:
+  - name: bad-template
+    priority: 1
+    match:
+      extensions: ["pdf"]
+    action:
+      move_to: {src_s}/documents/{{yyyy}}
+      rename_template: nested/{{unknown}}.pdf
+""".strip()
+
+    _write_profile(fake_home, "home", rules)
+
+    result = runner.invoke(app, ["validate", "-p", "home"])
+    assert result.exit_code == 1
+
+    out = ((result.stdout or "") + (result.stderr or "")).lower()
+    assert "rename_template" in out
+    assert "unsupported template fields" in out or "must only define a file name" in out

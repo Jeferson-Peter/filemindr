@@ -12,6 +12,7 @@ import yaml
 from loguru import logger
 
 from filemindr.core.config import expand_path
+from filemindr.core.templating import render_name_template, render_target_template
 
 
 def _p(value: str, *, base_dir: Path | None = None) -> Path:
@@ -25,8 +26,9 @@ class Rule:
     extensions: set[str]
     regex: re.Pattern | None
     older_than_days: int | None
-    move_to: Path | None
-    copy_to: Path | None
+    move_to: str | None
+    copy_to: str | None
+    rename_template: str | None
     conflict_policy: str | None
 
 
@@ -86,8 +88,9 @@ def _load_rules(config: dict[str, Any], *, base_dir: Path | None = None) -> list
                 extensions=exts,
                 regex=regex,
                 older_than_days=older_than_days,
-                move_to=_p(move_to_str, base_dir=base_dir) if move_to_str else None,
-                copy_to=_p(copy_to_str, base_dir=base_dir) if copy_to_str else None,
+                move_to=str(move_to_str) if move_to_str else None,
+                copy_to=str(copy_to_str) if copy_to_str else None,
+                rename_template=str(action.get("rename_template")) if action.get("rename_template") else None,
                 conflict_policy=str(rule_policy) if rule_policy else None,
             )
         )
@@ -144,6 +147,24 @@ def _resolve_conflict(dest: Path, policy: str) -> Path | None:
         i += 1
 
 
+def _resolve_destination(
+    file: Path,
+    rule: Rule | None,
+    *,
+    default_target: str,
+    base_dir: Path | None = None,
+) -> Path:
+    target_template = (rule.copy_to or rule.move_to) if rule else default_target
+    dest_dir = render_target_template(target_template, file=file, base_dir=base_dir)
+
+    if rule and rule.rename_template:
+        file_name = render_name_template(rule.rename_template, file=file)
+    else:
+        file_name = file.name
+
+    return dest_dir / file_name
+
+
 def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] | None = None) -> None:
     cfg_abs = Path(config_path).expanduser().resolve()
     if not cfg_abs.exists():
@@ -153,7 +174,7 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
     base_dir = cfg_abs.parent
 
     source = _p(config["source"], base_dir=base_dir)
-    default_target = _p(config.get("default_target", str(source / "others")), base_dir=base_dir)
+    default_target = str(config.get("default_target", str(source / "others")))
     global_policy = str(config.get("conflict_policy", "rename"))
     rules = _load_rules(config, base_dir=base_dir)
 
@@ -169,13 +190,6 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
 
     logger.info(f"Scanning: {source}")
 
-    targets = {default_target} | {p for rule in rules for p in (rule.move_to, rule.copy_to) if p}
-    for target in targets:
-        if dry_run:
-            logger.debug(f"[DRY] ensure dir: {target}")
-        else:
-            target.mkdir(parents=True, exist_ok=True)
-
     for file in source.iterdir():
         if not file.is_file():
             continue
@@ -188,8 +202,7 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
 
         rule = _match_rule(file, rules)
         rule_name = rule.name if rule else "default"
-        dest_dir = (rule.copy_to or rule.move_to) if rule else default_target
-        dest = dest_dir / file.name
+        dest = _resolve_destination(file, rule, default_target=default_target, base_dir=base_dir)
 
         policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy).lower()
         resolved = _resolve_conflict(dest, policy)
@@ -205,6 +218,9 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
         will_replace = resolved.exists() and policy in {"overwrite", "trash"}
 
         if dry_run:
+            logger.debug(f"[DRY] ensure dir: {resolved.parent}")
+
+        if dry_run:
             by_rule[rule_name] += 1
             if action_name == "COPY":
                 by_action["planned_copies"] += 1
@@ -214,6 +230,8 @@ def run_pipeline(config_path: str, dry_run: bool = False, only_paths: set[Path] 
             continue
 
         try:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+
             if will_replace:
                 if policy == "trash":
                     _trash(resolved)
