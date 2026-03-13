@@ -1,113 +1,117 @@
-# Filemindr --- Rule-Driven Local File Automation (v2)
+# Filemindr
 
-**Declarative local file automation using profiles.**
+Declarative local file automation using profiles.
 
-Filemindr lets you describe *what should happen* to your files --- not
-*how*.
+Filemindr lets you describe what should happen to your files, not how.
 
-You define rule pipelines in YAML (extensions, regex, age, priority),
-group them into **profiles**, and run them safely via a clean CLI.
+You define rule pipelines in YAML, group them into profiles, and run them safely through a clean CLI.
 
-Built as a learning + portfolio project with strong focus on:
+Built as a learning and portfolio project with strong focus on:
 
--   predictable behavior\
--   safety by default\
--   excellent CLI DX
+- predictable behavior
+- safety by default
+- excellent CLI DX
 
-------------------------------------------------------------------------
+---
 
-## ✨ Features (v2)
+## Features
 
-### Core
+- Profile-based configuration in `~/.filemindr`
+- Declarative YAML rules
+- Rule engine with priority, where the highest match wins
+- Match by:
+  - file extension
+  - filename regex
+  - file age with `older_than_days`
+- Actions:
+  - `move_to`
+  - `copy_to`
+  - `rename_template`
+- Global and per-rule conflict policies:
+  - `rename`
+  - `skip`
+  - `overwrite`
+  - `trash`
+- Dry-run mode
+- Explain mode
+- Watch mode
+- Final summary report
+- Structured logging with `INFO` and `DEBUG`
+- Cross-platform support for Windows, macOS, and Linux
 
--   Profiles-based configuration (`~/.filemindr`)
--   Declarative YAML rules
--   Rule engine with priority (highest wins)
--   Match by:
-    -   file extensions
-    -   regex on filename
-    -   file age (`older_than_days`)
--   Actions:
-    -   `move_to`
-    -   `copy_to`
-    -   `rename_template`
--   Global and per-rule conflict policies:
-    -   `rename`
-    -   `skip`
-    -   `overwrite`
-    -   `trash`
--   Dry-run mode
--   Final summary report
--   Structured logging (`INFO`, `DEBUG`)
--   Cross-platform (Windows, macOS, Linux)
+---
 
-------------------------------------------------------------------------
+## Installation
 
-## 📦 Installation
-
-``` bash
+```bash
 pipx install filemindr
 ```
 
 or
 
-``` bash
+```bash
 pip install filemindr
 ```
 
-Dev:
+Development setup:
 
-``` bash
-uv sync
+```bash
+uv sync --extra dev
 ```
 
-------------------------------------------------------------------------
+---
 
-## 🧠 Profiles (core concept)
+## Profiles
 
-Instead of a single global YAML, Filemindr uses **profiles**.
+Instead of a single global YAML, Filemindr uses profiles.
 
 Each profile lives in:
 
-    ~/.filemindr/rules/<profile>/rules.yaml
+```text
+~/.filemindr/rules/<profile>/rules.yaml
+```
 
 And all profiles are registered in:
 
-    ~/.filemindr/profiles.yaml
+```text
+~/.filemindr/profiles.yaml
+```
 
 This allows:
 
--   multiple setups (home, work, media, etc)
--   explicit selection via CLI
--   zero ambiguity about which config is running
+- multiple setups such as `home`, `work`, or `media`
+- explicit selection via CLI
+- zero ambiguity about which config is running
 
-------------------------------------------------------------------------
+---
 
-## 🚀 Quick Start
+## Quick Start
 
 Create your first profile:
 
-``` bash
+```bash
 filemindr profile init home
 ```
 
 This creates:
 
-    ~/.filemindr/
-    ├── profiles.yaml
-    └── rules/
-        └── home/
-            └── rules.yaml
+```text
+~/.filemindr/
+├── profiles.yaml
+└── rules/
+    └── home/
+        └── rules.yaml
+```
 
 Open and edit the rules:
 
-``` bash
+```bash
 filemindr profile open home
 ```
 
 Example `rules.yaml`:
 
-``` yaml
+```yaml
 source: ~/Downloads
 default_target: ~/Downloads/others
 conflict_policy: rename
@@ -121,152 +125,174 @@ rules:
     action:
       move_to: ~/Downloads/finance/invoices
 
+  - name: dated-pdfs
+    priority: 70
+    match:
+      extensions: ["pdf"]
+    action:
+      move_to: ~/Downloads/archive/{yyyy}/{mm}
+      rename_template: "{stem}_{yyyy}-{mm}{suffix}"
+
   - name: images
     priority: 40
     match:
       extensions: ["jpg", "png", "webp"]
     action:
       move_to: ~/Downloads/images
-
-  - name: dated-pdfs
-    priority: 30
-    match:
-      extensions: ["pdf"]
-    action:
-      move_to: ~/Downloads/archive/{yyyy}/{mm}
-      rename_template: "{stem}_{yyyy}-{mm}{suffix}"
 ```
+
+Important notes:
+
+- Rule priority matters. If two rules match the same file, the higher priority wins.
+- `rename_template` only defines the final file name, not folders.
+- `move_to` and `copy_to` can use templates in the destination path.
 
 Supported template fields:
 
--   `{name}`
--   `{stem}`
--   `{suffix}`
--   `{ext}`
--   `{parent}`
--   `{yyyy}`
--   `{mm}`
--   `{dd}`
+- `{name}`
+- `{stem}`
+- `{suffix}`
+- `{ext}`
+- `{parent}`
+- `{yyyy}`
+- `{mm}`
+- `{dd}`
 
 Preview:
 
-``` bash
+```bash
 filemindr run -p home --dry-run
+```
+
+Verbose preview:
+
+```bash
+filemindr run -p home --dry-run --log-level DEBUG
 ```
 
 Run:
 
-``` bash
+```bash
 filemindr run -p home
 ```
 
-Verbose:
+---
 
-``` bash
-filemindr run -p home --log-level DEBUG
-```
-
-------------------------------------------------------------------------
-
-## 📂 Profile Commands
+## Profile Commands
 
 Create:
 
-``` bash
+```bash
 filemindr profile init home
 ```
 
 List:
 
-``` bash
+```bash
 filemindr profile list
 ```
 
 Show path:
 
-``` bash
+```bash
 filemindr profile show home
 ```
 
 Open in editor:
 
-``` bash
+```bash
 filemindr profile open home
 ```
 
 Remove completely:
 
-``` bash
+```bash
 filemindr profile remove home
 ```
 
-------------------------------------------------------------------------
+---
 
-## 👀 Watch Mode
+## Watch Mode
 
 Continuous:
 
-``` bash
+```bash
 filemindr watch -p home
 ```
 
 Single batch:
 
-``` bash
+```bash
 filemindr watch -p home --once
 ```
 
-------------------------------------------------------------------------
+---
 
-## 🔍 Explain Mode
+## Explain Mode
 
-``` bash
+Explain a directory:
+
+```bash
 filemindr explain -p home ~/Downloads
 ```
 
-------------------------------------------------------------------------
+Explain a single file with spaces in the path:
 
-## ✅ Validate
+```bash
+filemindr explain -p home "C:\Users\you\Downloads\Day Trade-2025.pdf"
+```
 
-``` bash
+---
+
+## Validate
+
+```bash
 filemindr validate -p home
 ```
 
-------------------------------------------------------------------------
+---
 
-## 🩺 Doctor
+## Doctor
 
-``` bash
+```bash
 filemindr doctor
 ```
 
-------------------------------------------------------------------------
+---
 
-## ⚔ Conflict Policy
+## Conflict Policy
 
-Supported:
+Supported values:
 
--   `rename`
--   `skip`
--   `overwrite`
--   `trash`
+- `rename`
+- `skip`
+- `overwrite`
+- `trash`
 
-------------------------------------------------------------------------
+---
 
-## 🧪 Development
+## Development
 
-``` bash
-uv run pytest
+Install development dependencies:
+
+```bash
+uv sync --extra dev
 ```
 
-------------------------------------------------------------------------
+Run tests:
 
-## 🛠 Status
+```bash
+uv run pytest -q
+```
 
-Stable v2.
+---
 
-------------------------------------------------------------------------
+## Status
 
-## 📄 License
+Current release line: `1.1.x`
+
+---
+
+## License
 
 MIT
