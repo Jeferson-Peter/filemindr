@@ -242,6 +242,12 @@ Explain a single file with spaces in the path:
 filemindr explain -p home "C:\Users\you\Downloads\Day Trade-2025.pdf"
 ```
 
+Explain with more detail about matched rules, templates, and rendered names:
+
+```bash
+filemindr explain -p home "C:\Users\you\Downloads\Day Trade-2025.pdf" --verbose
+```
+
 ---
 
 ## Validate

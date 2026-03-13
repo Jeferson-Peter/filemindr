@@ -8,10 +8,13 @@ import yaml
 
 from filemindr.core.config import expand_path
 from filemindr.core.runner import (
+    Rule,
     _load_rules,
     _match_rule,
     _resolve_destination,
     _resolve_conflict,
+    _normalize_ext,
+    _is_older_than,
 )
 
 
@@ -24,6 +27,10 @@ class ExplainResult:
     policy: str
     dest: Path
     resolved: Path | None
+    matched_rules: list[str]
+    target_template: str | None
+    rename_template: str | None
+    rendered_name: str
     reason: str | None
 
 
@@ -32,6 +39,23 @@ def _load_config(config_path: str) -> tuple[Path, dict[str, Any]]:
     if not cfg_path.exists():
         raise FileNotFoundError(config_path)
     return cfg_path, yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+
+
+def _rule_matches(file: Path, rule: Rule) -> bool:
+    ext = _normalize_ext(file.suffix)
+    filename = file.name
+
+    if rule.extensions and ext not in rule.extensions:
+        return False
+    if rule.regex and not rule.regex.search(filename):
+        return False
+    if rule.older_than_days is not None and not _is_older_than(file, rule.older_than_days):
+        return False
+    return True
+
+
+def _matching_rules(file: Path, rules: list[Rule]) -> list[Rule]:
+    return [rule for rule in rules if _rule_matches(file, rule)]
 
 
 def explain_files(
@@ -67,11 +91,16 @@ def explain_files(
                     policy=global_policy,
                     dest=f,
                     resolved=None,
+                    matched_rules=[],
+                    target_template=None,
+                    rename_template=None,
+                    rendered_name=f.name,
                     reason="not_found_or_not_file" if verbose else None,
                 )
             )
             continue
 
+        matched_rules = _matching_rules(f, rules)
         rule = _match_rule(f, rules)
 
         rule_name = rule.name if rule else "default"
@@ -83,6 +112,9 @@ def explain_files(
 
         dest = _resolve_destination(f, rule, default_target=default_target, base_dir=base_dir)
         resolved = _resolve_conflict(dest, policy)
+        target_template = (rule.copy_to or rule.move_to) if rule else default_target
+        rename_template = rule.rename_template if rule else None
+        rendered_name = dest.name
 
         reason = None
         if verbose:
@@ -92,12 +124,23 @@ def explain_files(
 
             if rule:
                 parts.append(f"matched_rule={rule.name}")
+                parts.append(
+                    "matched_candidates="
+                    + ", ".join(f"{item.name}(prio={item.priority})" for item in matched_rules)
+                )
                 if rule.regex:
                     parts.append("regex=YES")
                 if rule.older_than_days is not None:
                     parts.append(f"older_than_days={rule.older_than_days}")
+                parts.append(f"target_template={target_template}")
+                if rename_template:
+                    parts.append(f"rename_template={rename_template}")
+                    parts.append(f"rendered_name={rendered_name}")
             else:
                 parts.append("matched_rule=default")
+                parts.append("matched_candidates=default")
+                parts.append(f"target_template={target_template}")
+                parts.append(f"rendered_name={rendered_name}")
 
             if dest.exists():
                 parts.append("dest_exists=YES")
@@ -125,6 +168,10 @@ def explain_files(
                 policy=policy,
                 dest=dest,
                 resolved=resolved,
+                matched_rules=[f"{item.name}(prio={item.priority})" for item in matched_rules],
+                target_template=target_template,
+                rename_template=rename_template,
+                rendered_name=rendered_name,
                 reason=reason,
             )
         )
