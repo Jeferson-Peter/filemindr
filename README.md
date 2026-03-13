@@ -160,6 +160,24 @@ ignore:
   - "~$*"
 ```
 
+Example with ignore plus a rule:
+
+```yaml
+source: ~/Downloads
+default_target: ~/Downloads/others
+ignore:
+  - "*.tmp"
+  - "*.crdownload"
+
+rules:
+  - name: documents
+    priority: 50
+    match:
+      extensions: ["pdf"]
+    action:
+      move_to: ~/Downloads/documents
+```
+
 Supported template fields:
 
 - `{name}`
@@ -194,6 +212,34 @@ Write a JSON report:
 
 ```bash
 filemindr run -p home --report report.json
+```
+
+Example report payload:
+
+```json
+{
+  "profile": "home",
+  "command": "run",
+  "dry_run": false,
+  "summary": {
+    "files_scanned": 55,
+    "moved": 55,
+    "copied": 0,
+    "errors": 0
+  },
+  "by_rule": {
+    "dated-pdfs": 22,
+    "images": 12
+  },
+  "events": [
+    {
+      "event": "moved",
+      "rule": "dated-pdfs",
+      "source": "C:/Users/you/Downloads/Day Trade-2025.pdf",
+      "destination": "C:/Users/you/Downloads/archive/2026/03/day-trade-2025_2026-03.pdf"
+    }
+  ]
+}
 ```
 
 ---
@@ -405,7 +451,7 @@ Release notes are versioned in the repository under `release-notes/` and consume
 
 ## Status
 
-Current release line: `1.3.x`
+Current release line: `1.4.x`
 
 ---
 
