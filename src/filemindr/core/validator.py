@@ -52,6 +52,16 @@ def validate_config_file(config_path: Path) -> ValidationResult:
             f"Allowed: {', '.join(sorted(ALLOWED_POLICIES))}"
         )
 
+    ignore_cfg = config.get("ignore", [])
+    if ignore_cfg is not None:
+        if not isinstance(ignore_cfg, list):
+            errors.append("Field 'ignore' must be a list")
+        else:
+            for item in ignore_cfg:
+                if not isinstance(item, str):
+                    errors.append(f"Field 'ignore' must contain only strings (got {type(item).__name__})")
+                    break
+
     rules_cfg = config.get("rules", [])
     if rules_cfg is None:
         rules_cfg = []

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import time
@@ -13,6 +14,7 @@ from loguru import logger
 
 from filemindr.core.config import expand_path
 from filemindr.core.history import HistoryWriter, prune_history, retention_days_default
+from filemindr.core.ignore import load_ignore_patterns, matches_ignore_pattern
 from filemindr.core.templating import render_name_template, render_target_template
 
 
@@ -173,6 +175,7 @@ def run_pipeline(
     *,
     profile: str | None = None,
     command: str | None = None,
+    report_path: Path | None = None,
 ) -> None:
     cfg_abs = Path(config_path).expanduser().resolve()
     if not cfg_abs.exists():
@@ -184,6 +187,7 @@ def run_pipeline(
     source = _p(config["source"], base_dir=base_dir)
     default_target = str(config.get("default_target", str(source / "others")))
     global_policy = str(config.get("conflict_policy", "rename"))
+    ignore_patterns = load_ignore_patterns(config)
     rules = _load_rules(config, base_dir=base_dir)
     history: HistoryWriter | None = None
     if profile and command in {"run", "watch"}:
@@ -205,6 +209,7 @@ def run_pipeline(
 
     by_rule = Counter()
     by_action = Counter()
+    report_events: list[dict[str, str | bool | int]] = []
 
     logger.info(f"Scanning: {source}")
 
@@ -213,6 +218,9 @@ def run_pipeline(
             if not file.is_file():
                 continue
             if file.resolve() == cfg_abs:
+                continue
+            if matches_ignore_pattern(file, ignore_patterns):
+                logger.debug(f"IGNORE: {file}")
                 continue
             if only_paths is not None and file not in only_paths:
                 continue
@@ -239,6 +247,15 @@ def run_pipeline(
                             "destination": str(dest),
                         }
                     )
+                report_events.append(
+                    {
+                        "event": "skipped",
+                        "rule": rule_name,
+                        "policy": policy,
+                        "source": str(file),
+                        "destination": str(dest),
+                    }
+                )
                 logger.debug(f"SKIP (exists): {dest}")
                 continue
 
@@ -265,6 +282,15 @@ def run_pipeline(
                             "destination": str(resolved),
                         }
                     )
+                report_events.append(
+                    {
+                        "event": "planned_copy" if action_name == "COPY" else "planned_move",
+                        "rule": rule_name,
+                        "policy": policy,
+                        "source": str(file),
+                        "destination": str(resolved),
+                    }
+                )
                 logger.debug(f"[DRY] {action_name} {chosen} | {file} -> {resolved}")
                 continue
 
@@ -285,6 +311,15 @@ def run_pipeline(
                                     "undo_supported": False,
                                 }
                             )
+                        report_events.append(
+                            {
+                                "event": "trashed",
+                                "rule": rule_name,
+                                "policy": policy,
+                                "path": str(resolved),
+                                "undo_supported": False,
+                            }
+                        )
                     else:
                         resolved.unlink()
                         overwritten += 1
@@ -299,6 +334,15 @@ def run_pipeline(
                                     "undo_supported": False,
                                 }
                             )
+                        report_events.append(
+                            {
+                                "event": "overwritten",
+                                "rule": rule_name,
+                                "policy": policy,
+                                "path": str(resolved),
+                                "undo_supported": False,
+                            }
+                        )
 
                 if action_name == "COPY":
                     shutil.copy2(file, resolved)
@@ -315,6 +359,16 @@ def run_pipeline(
                                 "undo_supported": False,
                             }
                         )
+                    report_events.append(
+                        {
+                            "event": "copied",
+                            "rule": rule_name,
+                            "policy": policy,
+                            "source": str(file),
+                            "destination": str(resolved),
+                            "undo_supported": False,
+                        }
+                    )
                 else:
                     file.rename(resolved)
                     moved += 1
@@ -330,6 +384,16 @@ def run_pipeline(
                                 "undo_supported": True,
                             }
                         )
+                    report_events.append(
+                        {
+                            "event": "moved",
+                            "rule": rule_name,
+                            "policy": policy,
+                            "source": str(file),
+                            "destination": str(resolved),
+                            "undo_supported": True,
+                        }
+                    )
 
                 by_rule[rule_name] += 1
                 logger.debug(f"{action_name} {chosen} | {file} -> {resolved}")
@@ -347,6 +411,16 @@ def run_pipeline(
                             "error": str(e),
                         }
                     )
+                report_events.append(
+                    {
+                        "event": "error",
+                        "rule": rule_name,
+                        "policy": policy,
+                        "source": str(file),
+                        "destination": str(resolved),
+                        "error": str(e),
+                    }
+                )
                 logger.exception(f"ERROR moving {file} -> {resolved}: {e}")
     except Exception as exc:
         if history:
@@ -374,3 +448,27 @@ def run_pipeline(
 
     if history:
         history.complete()
+
+    if report_path is not None:
+        report_payload = {
+            "profile": profile,
+            "command": command or "run_pipeline",
+            "config_path": str(cfg_abs),
+            "source": str(source),
+            "dry_run": dry_run,
+            "summary": {
+                "files_scanned": total_files,
+                "moved": moved,
+                "copied": copied,
+                "overwritten": overwritten,
+                "skipped": skipped,
+                "errors": errors,
+                "trashed": by_action.get("trashed", 0),
+                "planned_moves": by_action.get("planned_moves", 0),
+                "planned_copies": by_action.get("planned_copies", 0),
+            },
+            "by_rule": dict(by_rule),
+            "events": report_events,
+        }
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")

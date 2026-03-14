@@ -160,3 +160,33 @@ rules:
     out = ((result.stdout or "") + (result.stderr or "")).lower()
     assert "rename_template" in out
     assert "unsupported template fields" in out or "must only define a file name" in out
+
+
+def test_validate_rejects_invalid_ignore_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake_home = tmp_path / "home"
+    _fake_home(monkeypatch, fake_home)
+
+    src = tmp_path / "Downloads"
+    src.mkdir()
+    src_s = src.as_posix()
+
+    rules = f"""
+source: {src_s}
+ignore: "*.tmp"
+
+rules:
+  - name: docs
+    priority: 1
+    match:
+      extensions: ["pdf"]
+    action:
+      move_to: {src_s}/documents
+""".strip()
+
+    _write_profile(fake_home, "home", rules)
+
+    result = runner.invoke(app, ["validate", "-p", "home"])
+    assert result.exit_code == 1
+
+    out = ((result.stdout or "") + (result.stderr or "")).lower()
+    assert "field 'ignore' must be a list" in out

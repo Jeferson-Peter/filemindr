@@ -9,6 +9,7 @@ from filemindr.core.config import resolve_profile_config, expand_path
 from filemindr.core.explain import explain_files, format_explain
 from filemindr.core.history import clear_history, find_run, load_run_events, iter_run_meta, prune_history, retention_days_default, undo_run
 from filemindr.core.helpers import open_in_editor, open_with_default_app
+from filemindr.core.ignore import load_ignore_patterns
 from filemindr.core.runner import run_pipeline
 from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
 from filemindr.core.validator import validate_config_file
@@ -46,6 +47,7 @@ def _profiles_file() -> Path:
 def run(
     profile: str = typer.Option(..., "--profile", "-p"),
     dry_run: bool = False,
+    report: Path | None = typer.Option(None, "--report", help="Write a JSON execution report to this path"),
     log_level: str = typer.Option("INFO"),
 ):
     _setup_logger(log_level)
@@ -53,7 +55,7 @@ def run(
     config_path = resolve_profile_config(profile)
     logger.info(f"Running pipeline | profile={profile} config={config_path} dry_run={dry_run}")
 
-    run_pipeline(str(config_path), dry_run, profile=profile, command="run")
+    run_pipeline(str(config_path), dry_run, profile=profile, command="run", report_path=report)
 
 
 @app.command()
@@ -72,8 +74,9 @@ def watch(
 
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     source_dir = expand_path(cfg["source"], base_dir=Path(config_path).parent)
+    ignore_patterns = load_ignore_patterns(cfg)
 
-    opts = WatchOptions(debounce_ms=debounce_ms, stable_ms=stable_ms)
+    opts = WatchOptions(debounce_ms=debounce_ms, stable_ms=stable_ms, ignore_patterns=ignore_patterns)
 
     watch_and_run(
         source_dir=source_dir,
@@ -81,6 +84,7 @@ def watch(
         dry_run=dry_run,
         opts=opts,
         once=once,
+        profile=profile,
     )
 
 
