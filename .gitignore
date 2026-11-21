@@ -1,5 +1,15 @@
 .idea
 __pycache__
 .venv
+.uv-cache/
+.pytest_cache/
+.pytest-work*/
+.ruff_cache/
+dist/
+build/
+.package-check*/
+.benchmark-work/
+.coverage*
+htmlcov/
 filemindr.yaml
 PR_DESCRIPTION.local.md

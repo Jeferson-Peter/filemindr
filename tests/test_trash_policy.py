@@ -25,7 +25,7 @@ def test_trash_calls_send2trash(monkeypatch, tmp_path: Path):
     )
 
     import sys
-    sys.modules["send2trash"] = SimpleNamespace(send2trash=fake_send2trash)
+    monkeypatch.setitem(sys.modules, "send2trash", SimpleNamespace(send2trash=fake_send2trash))
 
     runner._trash(target)
 
@@ -41,7 +41,7 @@ def test_trash_raises_and_preserves_file_when_send2trash_fails(monkeypatch, tmp_
         raise RuntimeError("boom")
 
     import sys
-    sys.modules["send2trash"] = SimpleNamespace(send2trash=failing_send2trash)
+    monkeypatch.setitem(sys.modules, "send2trash", SimpleNamespace(send2trash=failing_send2trash))
 
     with pytest.raises(RuntimeError, match="Failed to send"):
         runner._trash(target)

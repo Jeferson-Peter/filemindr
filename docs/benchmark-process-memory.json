@@ -1,0 +1,7 @@
+{
+  "scope": "Final 100000-file benchmark worker; peak observed during execution",
+  "pid": 39464,
+  "observed_at_utc": "2026-11-21T18:50:14.8159031Z",
+  "peak_working_set_bytes": 290672640,
+  "working_set_bytes": 59801600
+}

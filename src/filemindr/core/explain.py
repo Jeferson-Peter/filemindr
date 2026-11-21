@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from filemindr.core.config import expand_path
 from filemindr.core.ignore import load_ignore_patterns, matches_ignore_pattern
+from filemindr.core.validator import load_validated_config
 from filemindr.core.runner import (
     Rule,
     _load_rules,
@@ -39,7 +38,7 @@ def _load_config(config_path: str) -> tuple[Path, dict[str, Any]]:
     cfg_path = Path(config_path).expanduser().resolve()
     if not cfg_path.exists():
         raise FileNotFoundError(config_path)
-    return cfg_path, yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    return cfg_path, load_validated_config(cfg_path)
 
 
 def _rule_matches(file: Path, rule: Rule) -> bool:
@@ -72,7 +71,7 @@ def explain_files(
     base_dir = cfg_path.parent
 
     source = expand_path(config["source"], base_dir=base_dir)
-    default_target = str(config.get("default_target", str(source / "others")))
+    default_target = str(config.get("default_target", str(source / "others").replace("{", "{{").replace("}", "}}")))
     global_policy = str(config.get("conflict_policy", "rename")).lower()
     ignore_patterns = load_ignore_patterns(config)
 
@@ -81,9 +80,9 @@ def explain_files(
     results: list[ExplainResult] = []
 
     for f in files:
-        f = f.expanduser().resolve()
+        f = f.expanduser().absolute()
 
-        if not f.exists() or not f.is_file():
+        if f.is_symlink() or not f.exists() or not f.is_file():
             results.append(
                 ExplainResult(
                     file=f,

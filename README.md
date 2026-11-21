@@ -40,7 +40,8 @@ Built as a learning and portfolio project with strong focus on:
 - Run history with `list`, `show`, `prune`, and `clear`
 - Final summary report
 - Structured logging with `INFO` and `DEBUG`
-- Cross-platform support for Windows, macOS, and Linux
+- Portable implementation targeting Windows, macOS, and Linux; see the
+  [assessment](docs/engineering-assessment.md) for platforms actually verified.
 
 ---
 
@@ -280,6 +281,22 @@ filemindr profile remove home
 
 ## Watch Mode
 
+Watch mode observes direct children only. File size, identity, permission mode,
+and nanosecond timestamps must remain unchanged for the stability interval before processing.
+This is a heuristic: another program can resume writing later. Prefer writing
+to an ignored `.part` file and renaming it to its final name when finished.
+
+The pending handoff deduplicates paths and backpressures ingestion at
+`max_pending_paths` (10,000 by default). Stability checks run together; a busy
+file does not block checks for other pending files. Long file operations run
+serially while ingestion continues up to that bound. Ctrl+C/SIGTERM stops
+between file operations; the current filesystem call must finish first.
+
+Unchanged duplicate events are suppressed after failed attempts too, preventing
+recovery notifications from triggering repeated copies. A source permission or
+data change permits another attempt. If only destination conditions change
+(for example, disk space is freed), retry with `filemindr run` or restart watch.
+
 Continuous:
 
 ```bash
@@ -408,7 +425,13 @@ Undo one recorded run:
 filemindr undo <run_id>
 ```
 
-Undo v1 only reverts recorded move operations. It does not restore `trash`, `overwrite`, or `copy` events.
+Undo only reverts new, verified move operations that did not replace an existing
+file. It compares SHA-256, size, modification time, device, and inode before
+moving anything. Modified/replaced files, missing files, occupied original
+paths, and legacy records without identity data are skipped with a reason in
+history. Successful undo events prevent replay while those records are retained.
+Copies and moves that replaced/trash-displaced an existing file are not reversible
+through this command. History is an audit log, not a backup.
 
 Example workflow:
 
@@ -422,12 +445,69 @@ filemindr undo <run_id>
 
 ## Conflict Policy
 
-Supported values:
+| Policy | Behavior | Recovery |
+| --- | --- | --- |
+| `rename` (default) | Choose an unused numbered name on conflict | Eligible moves support verified undo |
+| `skip` | Leave existing destination untouched | No action to undo |
+| `overwrite` | Stage, verify, then replace the destination | Previous destination is permanently replaced; no full undo |
+| `trash` | Stage incoming data, retain a private recovery copy, trash old destination, publish | OS trash recovery is manual; no full undo |
 
-- `rename`
-- `skip`
-- `overwrite`
-- `trash`
+Copies and replacement moves are written to a temporary file on the destination
+filesystem, synced, and checked before publication. Same-filesystem moves use
+no-clobber hard-link publication. Before source removal, moves claim the source
+under a private `.filemindr-*.bak` name in its own directory and verify that file
+and the published destination. A new file at the original source name is left
+untouched. Cross-device moves
+fall back to a verified staged copy, then remove the source. Unsupported hard-link
+filesystems fail safely rather than falling back to a racy overwrite. Locks,
+permission failures, and insufficient space are reported as errors. If source
+removal fails after publication, recovery data remains and the event reports a
+`recovery_path`. Restoration of the source name never replaces a newly created
+file; a retained source backup may need manual inspection instead. The CLI
+returns nonzero when a run has file errors.
+
+Atomic replacement of a single directory entry depends on the operating system
+and filesystem. A whole move, cross-device copy, trash operation, or pipeline is
+not a transaction. Concurrent changes are checked before commit; there remains
+a race between the last check and replacement/removal. Do not run competing
+organizers against the same files. Power loss and hostile directory/symlink swaps
+are outside the guarantees. See [Python's replacement contract](https://docs.python.org/3.12/library/os.html#os.replace).
+
+Source and destination symlink files are unsupported. Targets may be explicit
+paths outside the source, including resolved directory aliases; generated filename
+components cannot inject separators or parent traversal. Direct source/target
+overlap is rejected. Child output directories remain supported because scanning
+and watching are shallow. Templates accept named fields only, without format
+specifiers or conversions. Escape literal braces as `{{` and `}}`.
+
+If a process is killed, inspect `operation_started` and subsequent history events
+and `.filemindr-*.tmp`/`.filemindr-*.bak` files in both source and destination
+directories. A retained `.bak` can hold a claimed source or the previous trash
+destination when rollback fails or cannot be verified. These files are
+excluded from processing; inspect them manually before deleting them. JSONL
+history is flushed on append but is not a power-loss-durable transaction journal.
+Summary metadata updates at start and finish, so a killed run can remain `running`.
+
+`--report` requires an unused path and may create that report during dry-run;
+dry-run does not create target directories or move/copy source data. Profile runs
+still write/prune audit history in dry-run. Use a new report filename for each run.
+
+Example: keep downloads untouched while copying PDFs by modification month:
+
+```yaml
+source: ~/Downloads
+default_target: ~/Downloads/others
+conflict_policy: skip
+ignore: ['*.part', '*.tmp']
+rules:
+  - name: monthly-pdf-backup
+    priority: 20
+    match:
+      extensions: [pdf]
+    action:
+      copy_to: ~/Documents/PDF/{yyyy}/{mm}
+      rename_template: '{stem_safe}{suffix}'
+```
 
 ---
 
@@ -445,7 +525,23 @@ Run tests:
 uv run pytest -q
 ```
 
-Release notes are versioned in the repository under `release-notes/` and consumed automatically by the publish workflow.
+Run lint and build distributions:
+
+```bash
+uv run ruff check .
+uv build
+```
+
+CI checks Windows/Linux/macOS with Python 3.12–3.14, including isolated wheel and
+source-distribution installation. This matrix must run remotely before a
+cross-platform release can be considered verified. Publishing requires manual
+dispatch on `development` after CI; configure required reviewers for the `pypi`
+environment. The workflow does not automatically create tags or GitHub releases.
+Keep versioned notes in `release-notes/` for release preparation.
+
+See the [engineering assessment](docs/engineering-assessment.md),
+[benchmark methodology and results](docs/benchmarks.md), and
+[portfolio case study](CASE_STUDY.md).
 
 ---
 
