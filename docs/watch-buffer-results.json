@@ -1,0 +1,23 @@
+[
+  {
+    "events": 100,
+    "seconds": 0.019886,
+    "peak_pending": 100,
+    "capacity": 1000,
+    "peak_python_mib": 0.059
+  },
+  {
+    "events": 10000,
+    "seconds": 0.25024,
+    "peak_pending": 1000,
+    "capacity": 1000,
+    "peak_python_mib": 1.439
+  },
+  {
+    "events": 100000,
+    "seconds": 2.729218,
+    "peak_pending": 1000,
+    "capacity": 1000,
+    "peak_python_mib": 2.136
+  }
+]

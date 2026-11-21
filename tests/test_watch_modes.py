@@ -27,14 +27,14 @@ def test_watch_normal_runs_twice_then_stops(monkeypatch, tmp_path: Path):
 
     calls: list[set[Path] | None] = []
 
-    def fake_run_pipeline(config_path: str, dry_run: bool = False, only_paths=None):
+    def fake_run_pipeline(config_path: str, dry_run: bool = False, only_paths=None, **kwargs):
         calls.append(only_paths)
 
     monkeypatch.setattr(watcher, "run_pipeline", fake_run_pipeline)
 
     opts = watcher.WatchOptions(debounce_ms=10, stable_ms=10, poll_interval_ms=10)
 
-    def fake_watch(_dir, recursive=False, stop_event=None):
+    def fake_watch(_dir, recursive=False, stop_event=None, **kwargs):
         yield [(1, str(f1))]
         time.sleep(0.05)
 
@@ -80,14 +80,14 @@ def test_watch_once_runs_once_and_exits(monkeypatch, tmp_path: Path):
 
     calls: list[set[Path] | None] = []
 
-    def fake_run_pipeline(config_path: str, dry_run: bool = False, only_paths=None):
+    def fake_run_pipeline(config_path: str, dry_run: bool = False, only_paths=None, **kwargs):
         calls.append(only_paths)
 
     monkeypatch.setattr(watcher, "run_pipeline", fake_run_pipeline)
 
     opts = watcher.WatchOptions(debounce_ms=10, stable_ms=10, poll_interval_ms=10)
 
-    def fake_watch(_dir, recursive=False, stop_event=None):
+    def fake_watch(_dir, recursive=False, stop_event=None, **kwargs):
         yield [(1, str(f1))]
         yield [(1, str(f1))]
 
@@ -131,14 +131,14 @@ def test_watch_keeps_unstable_files_pending_until_they_stabilize(monkeypatch, tm
 
     calls: list[set[Path] | None] = []
 
-    def fake_run_pipeline(config_path: str, dry_run: bool = False, only_paths=None):
+    def fake_run_pipeline(config_path: str, dry_run: bool = False, only_paths=None, **kwargs):
         calls.append(only_paths)
 
     monkeypatch.setattr(watcher, "run_pipeline", fake_run_pipeline)
 
     opts = watcher.WatchOptions(debounce_ms=10, stable_ms=10, poll_interval_ms=10)
 
-    def fake_watch(_dir, recursive=False, stop_event=None):
+    def fake_watch(_dir, recursive=False, stop_event=None, **kwargs):
         yield [(1, str(f1))]
         time.sleep(0.05)
         yield [(1, str(f1))]

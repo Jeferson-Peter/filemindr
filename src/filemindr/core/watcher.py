@@ -2,27 +2,20 @@ from __future__ import annotations
 
 import signal
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from queue import Queue, Empty
-from threading import Event, Thread
+from threading import Condition, Event, Thread, current_thread, main_thread
 
 from loguru import logger
-from watchfiles import watch
+from watchfiles import Change, watch
 
 from filemindr.core.ignore import matches_ignore_pattern
+from filemindr.core.operations import INTERNAL_PREFIX, snapshot
 from filemindr.core.runner import run_pipeline
 
-
-DEFAULT_IGNORED_SUFFIXES = {
-    ".crdownload",
-    ".part",
-    ".aria2",
-    ".tmp",
-    ".temp",
-}
-
-DEFAULT_IGNORED_PREFIXES = {"~$"}
+DEFAULT_IGNORED_SUFFIXES = {".crdownload", ".part", ".aria2", ".tmp", ".temp"}
+DEFAULT_IGNORED_PREFIXES = {"~$", INTERNAL_PREFIX}
 
 
 @dataclass(frozen=True)
@@ -30,66 +23,83 @@ class WatchOptions:
     debounce_ms: int = 800
     stable_ms: int = 1500
     poll_interval_ms: int = 250
-
-    ignore_suffixes: set[str] = field(default_factory=lambda: set(DEFAULT_IGNORED_SUFFIXES))
-    ignore_prefixes: set[str] = field(default_factory=lambda: set(DEFAULT_IGNORED_PREFIXES))
+    ignore_suffixes: set[str] = field(
+        default_factory=lambda: set(DEFAULT_IGNORED_SUFFIXES)
+    )
+    ignore_prefixes: set[str] = field(
+        default_factory=lambda: set(DEFAULT_IGNORED_PREFIXES)
+    )
     ignore_patterns: list[str] = field(default_factory=list)
-
     max_pending_paths: int = 10_000
     log_pending: bool = False
-
     main_loop_tick_ms: int = 250
+
+    def __post_init__(self) -> None:
+        if self.max_pending_paths <= 0:
+            raise ValueError("max_pending_paths must be positive")
+        if (
+            min(self.debounce_ms, self.stable_ms) < 0
+            or min(self.poll_interval_ms, self.main_loop_tick_ms) <= 0
+        ):
+            raise ValueError(
+                "Watch intervals must be positive (debounce/stability may be zero)"
+            )
 
 
 def _should_ignore(path: Path, opts: WatchOptions) -> bool:
     name = path.name.lower()
-    if path.name.lower() == "filemindr.yaml":
-        return True
-    if matches_ignore_pattern(path, opts.ignore_patterns):
-        return True
-    for p in opts.ignore_prefixes:
-        if name.startswith(p.lower()):
-            return True
-    for s in opts.ignore_suffixes:
-        if name.endswith(s.lower()):
-            return True
-    return False
+    return (
+        name == "filemindr.yaml"
+        or name.startswith(INTERNAL_PREFIX)
+        or matches_ignore_pattern(path, opts.ignore_patterns)
+        or any(name.startswith(prefix.lower()) for prefix in opts.ignore_prefixes)
+        or any(name.endswith(suffix.lower()) for suffix in opts.ignore_suffixes)
+    )
 
 
-def _is_stable(path: Path, stable_ms: int, poll_interval_ms: int) -> bool:
-    if not path.exists() or not path.is_file():
-        return False
-
-    stable_s = stable_ms / 1000
-    poll_s = max(0.05, poll_interval_ms / 1000)
-
-    start = time.monotonic()
+def _signature(path: Path) -> tuple[int, ...] | None:
     try:
-        st0 = path.stat()
-        prev_size = st0.st_size
-        prev_mtime = st0.st_mtime
-    except OSError:
-        return False
+        return snapshot(path)
+    except (OSError, ValueError):
+        return None
 
-    while True:
-        time.sleep(poll_s)
 
-        if not path.exists():
-            return False
+def _is_stable(
+    path: Path, previous: tuple[int, ...] | None, since: float, stable_ms: int
+) -> bool:
+    return (
+        previous is not None
+        and _signature(path) == previous
+        and time.monotonic() - since >= stable_ms / 1000
+    )
 
-        try:
-            st = path.stat()
-            size = st.st_size
-            mtime = st.st_mtime
-        except OSError:
-            return False
 
-        if size != prev_size or mtime != prev_mtime:
-            prev_size, prev_mtime = size, mtime
-            start = time.monotonic()
+@dataclass
+class _Pending:
+    last_event: float
+    signature: tuple[int, ...] | None = None
+    since: float = 0
 
-        if (time.monotonic() - start) >= stable_s:
-            return True
+
+class PendingPaths:
+    """A bounded, deduplicated handoff. Full buffers backpressure the producer."""
+
+    def __init__(self, capacity: int) -> None:
+        if capacity <= 0:
+            raise ValueError("capacity must be positive")
+        self.capacity = capacity
+        self.paths: dict[Path, _Pending] = {}
+        self.condition = Condition()
+
+    def put(self, path: Path, stop: Event) -> None:
+        with self.condition:
+            while path not in self.paths and len(self.paths) >= self.capacity:
+                if stop.is_set():
+                    return
+                self.condition.wait(0.05)
+            if not stop.is_set():
+                state = self.paths.setdefault(path, _Pending(time.monotonic()))
+                state.last_event = time.monotonic()
 
 
 def watch_and_run(
@@ -103,136 +113,115 @@ def watch_and_run(
 ) -> None:
     opts = opts or WatchOptions()
     source_dir = source_dir.expanduser().resolve()
+    config_file = Path(config_path).expanduser().resolve()
+    if not source_dir.is_dir():
+        raise NotADirectoryError(source_dir)
+    pending = PendingPaths(opts.max_pending_paths)
+    stop = Event()
+    done = Event()
+    producer_errors: list[Exception] = []
+    batch_failed = False
+    attempted: OrderedDict[Path, tuple[int, ...]] = OrderedDict()
+    previous_handlers = {}
 
-    logger.info(f"Watching: {source_dir}")
-    logger.info(f"Config: {config_path} | dry_run={dry_run}")
-    logger.info(f"debounce_ms={opts.debounce_ms} stable_ms={opts.stable_ms} once={once}")
+    def shutdown(signum, frame) -> None:
+        stop.set()
 
-    q: Queue[Path] = Queue()
-    stop_event = Event()
-
-    prev_handler = signal.getsignal(signal.SIGINT)
-
-    def _sigint_handler(signum, frame):
-        if not stop_event.is_set():
-            logger.info("Ctrl+C received. Stopping watcher...")
-            stop_event.set()
-
-    signal.signal(signal.SIGINT, _sigint_handler)
+    if current_thread() is main_thread():
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[sig] = signal.signal(sig, shutdown)
 
     def producer() -> None:
         try:
-            for changes in watch(source_dir, recursive=False, stop_event=stop_event):
-                if stop_event.is_set():
+            for changes in watch(
+                source_dir, recursive=False, stop_event=stop, rust_timeout=250
+            ):
+                if stop.is_set():
                     break
-                for _, changed_path in changes:
-                    p = Path(changed_path)
-                    if p.is_dir():
+                for kind, value in changes:
+                    path = Path(value).absolute()
+                    if (
+                        kind == Change.deleted
+                        or path == config_file
+                        or path.parent != source_dir
+                    ):
                         continue
-                    if _should_ignore(p, opts):
+                    if _should_ignore(path, opts) or _signature(path) is None:
                         continue
-                    q.put(p)
-        except Exception:
-            logger.exception("Watcher producer crashed.")
-            stop_event.set()
+                    pending.put(path, stop)
+        except Exception as exc:
+            producer_errors.append(exc)
+            stop.set()
+        finally:
+            done.set()
 
-    producer_thread = Thread(target=producer, daemon=False)
-    producer_thread.start()
-
-    pending: set[Path] = set()
-
-    def flush_pending() -> None:
-        nonlocal pending
-        if not pending:
-            return
-
-        if opts.log_pending:
-            logger.debug(
-                f"Pending paths ({len(pending)}): " + ", ".join(str(p) for p in list(pending)[:50])
-            )
-
-        ready = {
-            p for p in pending
-            if not _should_ignore(p, opts)
-            and _is_stable(p, opts.stable_ms, opts.poll_interval_ms)
-        }
-        still_pending = pending - ready
-
-        if still_pending and opts.log_pending:
-            logger.debug(f"Still waiting for stability ({len(still_pending)} paths).")
-
-
-        if ready:
-            logger.info(f"Detected stable changes ({len(ready)} paths). Running pipeline...")
-            try:
-                if profile:
-                    run_pipeline(
-                        config_path,
-                        dry_run=dry_run,
-                        only_paths=ready,
-                        profile=profile,
-                        command="watch",
-                    )
-                else:
-                    run_pipeline(config_path, dry_run=dry_run, only_paths=ready)
-            except KeyboardInterrupt:
-                stop_event.set()
-                logger.info("Pipeline interrupted by user.")
-            except Exception:
-                logger.exception("Pipeline run failed.")
-            finally:
-                if once and not stop_event.is_set():
-                    logger.info("watch --once completed. Exiting watcher.")
-                    stop_event.set()
-
-        pending = still_pending
-
-    quiet_s = opts.debounce_ms / 1000
-    tick_s = max(0.05, opts.main_loop_tick_ms / 1000)
-
+    thread = Thread(target=producer, name="filemindr-watch", daemon=False)
+    logger.info(f"Watching: {source_dir} | pending limit={opts.max_pending_paths}")
+    tick = max(0.005, min(opts.main_loop_tick_ms, opts.poll_interval_ms) / 1000)
     try:
-        while not stop_event.is_set():
-            try:
-                p = q.get(timeout=tick_s)
-            except Empty:
-                continue
-
-            pending.add(p)
-
-            if len(pending) > opts.max_pending_paths:
-                logger.warning(f"Too many pending paths ({len(pending)}). Flushing now...")
-                flush_pending()
-                continue
-
-            deadline = time.monotonic() + quiet_s
-            while not stop_event.is_set():
-                timeout = deadline - time.monotonic()
-                if timeout <= 0:
-                    break
+        thread.start()
+        while not stop.is_set():
+            ready: set[Path] = set()
+            signatures: dict[Path, tuple[int, ...]] = {}
+            now = time.monotonic()
+            with pending.condition:
+                for path, state in list(pending.paths.items()):
+                    signature = _signature(path)
+                    if signature is None or attempted.get(path) == signature:
+                        del pending.paths[path]
+                        continue
+                    if signature != state.signature:
+                        state.signature = signature
+                        state.since = now
+                    if now - state.last_event < opts.debounce_ms / 1000:
+                        continue
+                    if _is_stable(path, state.signature, state.since, opts.stable_ms):
+                        ready.add(path)
+                        signatures[path] = signature
+                        del pending.paths[path]
+                pending.condition.notify_all()
+                empty = not pending.paths
+            if ready:
                 try:
-                    p2 = q.get(timeout=min(timeout, tick_s))
-                except Empty:
-                    continue
-                else:
-                    pending.add(p2)
-                    deadline = time.monotonic() + quiet_s
-
-            if stop_event.is_set():
+                    kwargs = dict(dry_run=dry_run, only_paths=ready, stop_event=stop)
+                    if profile:
+                        kwargs.update(profile=profile, command="watch")
+                    summary = run_pipeline(config_path, **kwargs)
+                    if summary and summary["errors"]:
+                        batch_failed = True
+                        logger.error(
+                            f"Watch batch had {summary['errors']} operation error(s)"
+                        )
+                except Exception:
+                    batch_failed = True
+                    logger.exception("Pipeline run failed.")
+                # Recovery can recreate a source and emit events without changing its data.
+                for path, signature in signatures.items():
+                    attempted[path] = signature
+                    attempted.move_to_end(path)
+                    while len(attempted) > opts.max_pending_paths:
+                        attempted.popitem(last=False)
+                if once:
+                    stop.set()
+            elif done.is_set() and empty:
                 break
-
-            flush_pending()
-
+            if opts.log_pending:
+                logger.debug(f"Pending paths: {len(pending.paths)}")
+            stop.wait(tick)
     except KeyboardInterrupt:
-        stop_event.set()
-        logger.info("Watcher stopped by user (KeyboardInterrupt).")
+        stop.set()
     finally:
-        if pending and not stop_event.is_set():
-            flush_pending()
-
-        stop_event.set()
-        producer_thread.join(timeout=2.0)
-
-        signal.signal(signal.SIGINT, prev_handler)
-
+        stop.set()
+        with pending.condition:
+            pending.condition.notify_all()
+        if thread.ident is not None:
+            thread.join(timeout=2)
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
+        if thread.is_alive():
+            logger.error("Watcher producer did not stop within two seconds")
         logger.info("Watcher shutdown complete.")
-
+    if producer_errors:
+        raise RuntimeError("Watcher producer failed") from producer_errors[0]
+    if once and batch_failed:
+        raise RuntimeError("Watch batch failed; inspect the pipeline errors")

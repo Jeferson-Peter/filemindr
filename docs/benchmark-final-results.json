@@ -1,0 +1,91 @@
+{
+  "environment": {
+    "python": "3.12.9 (tags/v3.12.9:fdb8142, Feb  4 2025, 15:27:58) [MSC v.1942 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+    "cpu_count": 16,
+    "timestamp_utc": "2026-11-21T18:42:57Z",
+    "file_bytes": 8,
+    "rules": 20,
+    "repeats": 1,
+    "tracing": "tracemalloc enabled during all timed stages"
+  },
+  "baseline_ref": "eef6fb9",
+  "measurements": [
+    {
+      "version": "hardened",
+      "files": 100,
+      "scan": {
+        "seconds": 0.002369,
+        "peak_python_mib": 0.008,
+        "files_per_second": 42212
+      },
+      "matching_20_rules": {
+        "seconds": 0.001368,
+        "peak_python_mib": 0.008
+      },
+      "dry_run": {
+        "seconds": 0.096487,
+        "peak_python_mib": 0.173
+      },
+      "move": {
+        "seconds": 0.31597,
+        "peak_python_mib": 0.3
+      },
+      "history": {
+        "seconds": 0.035094,
+        "peak_python_mib": 0.031
+      }
+    },
+    {
+      "version": "hardened",
+      "files": 10000,
+      "scan": {
+        "seconds": 0.175475,
+        "peak_python_mib": 0.617,
+        "files_per_second": 56988
+      },
+      "matching_20_rules": {
+        "seconds": 0.076635,
+        "peak_python_mib": 0.617
+      },
+      "dry_run": {
+        "seconds": 7.083405,
+        "peak_python_mib": 9.61
+      },
+      "move": {
+        "seconds": 27.267719,
+        "peak_python_mib": 0.909
+      },
+      "history": {
+        "seconds": 3.845344,
+        "peak_python_mib": 0.953
+      }
+    },
+    {
+      "version": "hardened",
+      "files": 100000,
+      "scan": {
+        "seconds": 2.134834,
+        "peak_python_mib": 6.106,
+        "files_per_second": 46842
+      },
+      "matching_20_rules": {
+        "seconds": 0.85431,
+        "peak_python_mib": 6.107
+      },
+      "dry_run": {
+        "seconds": 68.218071,
+        "peak_python_mib": 98.641
+      },
+      "move": {
+        "seconds": 271.441753,
+        "peak_python_mib": 7.983
+      },
+      "history": {
+        "seconds": 31.072333,
+        "peak_python_mib": 1.855
+      }
+    }
+  ]
+}

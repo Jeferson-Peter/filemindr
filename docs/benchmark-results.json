@@ -1,0 +1,166 @@
+{
+  "environment": {
+    "python": "3.12.9 (tags/v3.12.9:fdb8142, Feb  4 2025, 15:27:58) [MSC v.1942 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+    "cpu_count": 16,
+    "timestamp_utc": "2026-11-21T18:34:06Z",
+    "file_bytes": 8,
+    "rules": 20,
+    "repeats": 1,
+    "tracing": "tracemalloc enabled during all timed stages"
+  },
+  "baseline_ref": "eef6fb9",
+  "measurements": [
+    {
+      "version": "baseline",
+      "files": 100,
+      "scan": {
+        "seconds": 0.002698,
+        "peak_python_mib": 0.008,
+        "files_per_second": 37064
+      },
+      "matching_20_rules": {
+        "seconds": 0.001314,
+        "peak_python_mib": 0.008
+      },
+      "dry_run": {
+        "seconds": 0.078124,
+        "peak_python_mib": 0.172
+      },
+      "move": {
+        "seconds": 0.121297,
+        "peak_python_mib": 0.169
+      },
+      "history": {
+        "seconds": 0.058764,
+        "peak_python_mib": 0.088
+      }
+    },
+    {
+      "version": "baseline",
+      "files": 10000,
+      "scan": {
+        "seconds": 0.222518,
+        "peak_python_mib": 0.617,
+        "files_per_second": 44940
+      },
+      "matching_20_rules": {
+        "seconds": 0.101032,
+        "peak_python_mib": 0.617
+      },
+      "dry_run": {
+        "seconds": 5.547784,
+        "peak_python_mib": 5.518
+      },
+      "move": {
+        "seconds": 14.405081,
+        "peak_python_mib": 7.269
+      },
+      "history": {
+        "seconds": 8.239535,
+        "peak_python_mib": 0.232
+      }
+    },
+    {
+      "version": "baseline",
+      "files": 100000,
+      "scan": {
+        "seconds": 1.932311,
+        "peak_python_mib": 6.106,
+        "files_per_second": 51752
+      },
+      "matching_20_rules": {
+        "seconds": 0.846534,
+        "peak_python_mib": 6.107
+      },
+      "dry_run": {
+        "seconds": 54.041417,
+        "peak_python_mib": 55.884
+      },
+      "move": {
+        "seconds": 108.701544,
+        "peak_python_mib": 64.28
+      },
+      "history": {
+        "seconds": 69.931108,
+        "peak_python_mib": 2.289
+      }
+    },
+    {
+      "version": "hardened",
+      "files": 100,
+      "scan": {
+        "seconds": 0.002497,
+        "peak_python_mib": 0.008,
+        "files_per_second": 40048
+      },
+      "matching_20_rules": {
+        "seconds": 0.001327,
+        "peak_python_mib": 0.008
+      },
+      "dry_run": {
+        "seconds": 0.083206,
+        "peak_python_mib": 0.173
+      },
+      "move": {
+        "seconds": 0.242468,
+        "peak_python_mib": 0.3
+      },
+      "history": {
+        "seconds": 0.031275,
+        "peak_python_mib": 0.031
+      }
+    },
+    {
+      "version": "hardened",
+      "files": 10000,
+      "scan": {
+        "seconds": 0.225521,
+        "peak_python_mib": 0.617,
+        "files_per_second": 44342
+      },
+      "matching_20_rules": {
+        "seconds": 0.109223,
+        "peak_python_mib": 0.617
+      },
+      "dry_run": {
+        "seconds": 6.063358,
+        "peak_python_mib": 9.609
+      },
+      "move": {
+        "seconds": 23.520973,
+        "peak_python_mib": 0.909
+      },
+      "history": {
+        "seconds": 3.067426,
+        "peak_python_mib": 0.951
+      }
+    },
+    {
+      "version": "hardened",
+      "files": 100000,
+      "scan": {
+        "seconds": 1.861662,
+        "peak_python_mib": 6.106,
+        "files_per_second": 53715
+      },
+      "matching_20_rules": {
+        "seconds": 0.775261,
+        "peak_python_mib": 6.107
+      },
+      "dry_run": {
+        "seconds": 56.656239,
+        "peak_python_mib": 98.641
+      },
+      "move": {
+        "seconds": 278.080843,
+        "peak_python_mib": 7.983
+      },
+      "history": {
+        "seconds": 35.477803,
+        "peak_python_mib": 1.865
+      }
+    }
+  ]
+}

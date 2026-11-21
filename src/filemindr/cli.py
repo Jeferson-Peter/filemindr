@@ -12,7 +12,8 @@ from filemindr.core.helpers import open_in_editor, open_with_default_app
 from filemindr.core.ignore import load_ignore_patterns
 from filemindr.core.runner import run_pipeline
 from filemindr.core.templates.yaml_tmpl import DEFAULT_CONFIG
-from filemindr.core.validator import validate_config_file
+from filemindr.core.validator import validate_config_file, load_validated_config
+from filemindr.core.templating import validate_file_name
 from filemindr.core.watcher import WatchOptions, watch_and_run
 
 
@@ -55,7 +56,9 @@ def run(
     config_path = resolve_profile_config(profile)
     logger.info(f"Running pipeline | profile={profile} config={config_path} dry_run={dry_run}")
 
-    run_pipeline(str(config_path), dry_run, profile=profile, command="run", report_path=report)
+    summary = run_pipeline(str(config_path), dry_run, profile=profile, command="run", report_path=report)
+    if summary["errors"]:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -72,7 +75,7 @@ def watch(
     config_path = resolve_profile_config(profile)
     logger.info(f"Starting watch | profile={profile} config={config_path} dry_run={dry_run}")
 
-    cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+    cfg = load_validated_config(Path(config_path))
     source_dir = expand_path(cfg["source"], base_dir=Path(config_path).parent)
     ignore_patterns = load_ignore_patterns(cfg)
 
@@ -152,6 +155,8 @@ def undo(
     logger.info(f"Reverted: {result.reverted}")
     logger.info(f"Skipped: {result.skipped}")
     logger.info(f"Errors: {result.errors}")
+    if result.errors:
+        raise typer.Exit(1)
 
 
 @profile_app.command("init")
@@ -163,6 +168,7 @@ def profile_init(
     Create profile folder + rules.yaml and register in profiles.yaml
     """
 
+    validate_file_name(name)
     base = _home()
     rules_dir = base / "rules" / name
     rules_dir.mkdir(parents=True, exist_ok=True)
@@ -358,17 +364,24 @@ def profile_remove(
         raise typer.Exit(1)
 
     profile_dir = Path(profiles[name]).expanduser()
+    managed_root = (_home() / "rules").resolve()
+    resolved_dir = profile_dir.resolve()
+    if ((_home() / "rules").is_symlink() or (_home() / "rules").is_junction()
+            or profile_dir.is_symlink() or profile_dir.is_junction()
+            or not resolved_dir.is_relative_to(managed_root) or resolved_dir == managed_root
+            or resolved_dir != managed_root / name):
+        raise typer.BadParameter("Refusing recursive deletion outside the managed profile directory")
 
     if not yes:
         if not typer.confirm(f"Delete profile '{name}' and ALL its files at:\n{profile_dir}\nContinue?"):
             raise typer.Exit()
 
-    del profiles[name]
-    pf.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-
     if profile_dir.exists():
         import shutil
         shutil.rmtree(profile_dir)
+
+    del profiles[name]
+    pf.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
     typer.echo(f"Profile '{name}' completely removed.")
 

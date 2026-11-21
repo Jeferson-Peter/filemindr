@@ -27,3 +27,20 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/filemindr"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src/filemindr",
+  "/tests",
+  "/docs",
+  "/scripts",
+  "/release-notes",
+  "/README.md",
+  "/CASE_STUDY.md",
+  "/LICENSE*",
+  "/uv.lock",
+  "/.python-version",
+]

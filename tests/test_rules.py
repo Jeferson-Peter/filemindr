@@ -1,5 +1,4 @@
 from pathlib import Path
-import yaml
 
 from filemindr.core.runner import _load_rules, _match_rule
 
