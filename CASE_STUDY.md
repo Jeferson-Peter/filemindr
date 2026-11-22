@@ -13,11 +13,13 @@ Rules are compiled once and sorted by descending priority; equal priorities
 retain configuration order. The first matching rule wins. Directory traversal
 remains shallow, so child output directories do not become new inputs.
 
-The runner handles selection, conflict naming, counters, and audit events.
-An immutable `OperationPlan` describes a regular-file operation and its expected
-destination state. The operations module owns staging, checksums, publication,
-and source removal. Undo uses that same operation boundary. This separation
-makes faults testable without a database or an additional execution framework.
+The shared execution planner handles selection, ignore rules, conflict naming,
+and destination-tree reservations for normal runs, dry-run, and explain mode.
+It emits structured plans with source metadata and expected destination state.
+The runner executes each plan and aggregates metrics and audit events. The
+operations module owns staging, checksums, publication, and source removal.
+Undo uses that same operation boundary. This separation makes faults testable
+without a database or an additional execution framework.
 
 ## The reliability problem
 
@@ -104,13 +106,39 @@ verification add real move overhead. Dry-run destination reservations consume
 additional memory to model duplicate names correctly. Those are explicit safety
 trade-offs rather than a claim that every path became faster.
 
+The later shared-planner/duplicate scan benchmark is separate from that historical
+comparison. On Windows 11 / Python 3.12.9, a 100,000-file dry-run took 36.835 s
+and peaked at 96.57 MiB of traced Python allocations (sampled process RSS peaked
+at 241.20 MiB). A read-only duplicate scan over 100,000 same-size identical
+files took 111.588 s and peaked at 132.01 MiB traced / 372.14 MiB sampled RSS.
+That deliberately creates one 100,000-path result group and shows the memory
+cost of returning all confirmed paths. Results and limitations are in
+[the current benchmark report](docs/benchmarks.md); these are not cross-platform
+performance guarantees.
+
+## Shared planning and duplicate detection
+
+The previously separate explain conflict resolver was replaced with the shared
+planner. Stable path ordering makes numbered names repeatable. A path reserved
+as a file cannot later be treated as a directory; a planned directory cannot
+become a file output. The planner reports those collisions without creating
+directories, and execution revalidates source, destination, and parent shape
+before publication. This reduces stale-plan surprises but cannot provide a
+filesystem snapshot or eliminate the check-to-mutation race.
+
+The new `duplicates` command is read-only. It filters by file size, hashes
+same-size candidates in bounded chunks, and only labels files duplicates after
+SHA-256 matches. Symlinks are skipped; unreadable and changing files are marked
+unverified. Optional profile ignore rules keep scan scope consistent with the
+user's pipeline. No automatic deletion or deduplication is performed.
+
 ## Cross-platform and release discipline
 
-Local validation covers Windows/NTFS on Python 3.12 and 3.14. Linux/macOS and Python
-3.13 are configured in CI, with their execution still required before claiming
-cross-platform release readiness. Symlink creation tests skip when privileges are
-unavailable. Cross-device errors are simulated; physical multi-volume transfers
-and network shares require further integration testing.
+Local validation for this feature iteration covers Windows/NTFS on Python 3.12
+so far. Linux/macOS and Python 3.13/3.14 still need validation before claiming
+cross-platform release readiness. Symlink creation tests skip when privileges
+are unavailable. Cross-device errors are simulated; physical multi-volume
+transfers and network shares require further integration testing.
 
 The first archive inspection revealed that Hatch's default source selection
 included a local report. Explicit inclusion patterns now keep unrelated local

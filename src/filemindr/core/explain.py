@@ -2,20 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from filemindr.core.config import expand_path
-from filemindr.core.ignore import load_ignore_patterns, matches_ignore_pattern
-from filemindr.core.validator import load_validated_config
-from filemindr.core.runner import (
-    Rule,
-    _load_rules,
-    _match_rule,
-    _resolve_destination,
-    _resolve_conflict,
-    _normalize_ext,
-    _is_older_than,
-)
+from filemindr.core.planning import ExecutionPlanner, PlannedOperation
 
 
 @dataclass(frozen=True)
@@ -34,28 +22,73 @@ class ExplainResult:
     reason: str | None
 
 
-def _load_config(config_path: str) -> tuple[Path, dict[str, Any]]:
-    cfg_path = Path(config_path).expanduser().resolve()
-    if not cfg_path.exists():
-        raise FileNotFoundError(config_path)
-    return cfg_path, load_validated_config(cfg_path)
+def _explain_result(
+    item: PlannedOperation, *, verbose: bool, source: Path
+) -> ExplainResult:
+    dest = item.requested_destination or item.source
+    if item.status == "error":
+        action = "ERROR"
+        resolved = None
+        reason = item.error
+    elif item.status == "skipped" and item.action == "SKIP":
+        action = "SKIP"
+        resolved = None
+        reason = item.reason if verbose else None
+    else:
+        action = item.action
+        resolved = item.destination
+        reason = None
 
+    if verbose and action not in {"SKIP", "ERROR"}:
+        parts = [f"source={source}", f"ext={item.source.suffix.lower() or '-'}"]
+        if item.matched_rules:
+            parts.extend(
+                (
+                    f"matched_rule={item.rule_name}",
+                    "matched_candidates="
+                    + ", ".join(
+                        f"{name}(prio={priority})"
+                        for name, priority in item.matched_rules
+                    ),
+                )
+            )
+        else:
+            parts.extend(("matched_rule=default", "matched_candidates=default"))
+        parts.append(f"target_template={item.target_template}")
+        if item.rename_template:
+            parts.extend(
+                (
+                    f"rename_template={item.rename_template}",
+                    f"rendered_name={item.rendered_name}",
+                )
+            )
+        parts.append(f"dest_exists={'YES' if dest.exists() else 'NO'}")
+        if item.reason == "conflict_policy_skip":
+            parts.append("conflict=skip")
+        elif resolved is not None and resolved != dest:
+            parts.append(f"conflict=rename -> {resolved.name}")
+        elif item.policy in {"overwrite", "trash"} and dest.exists():
+            parts.append(f"conflict={item.policy}")
+        else:
+            parts.append("conflict=none")
+        reason = " ".join(parts)
 
-def _rule_matches(file: Path, rule: Rule) -> bool:
-    ext = _normalize_ext(file.suffix)
-    filename = file.name
-
-    if rule.extensions and ext not in rule.extensions:
-        return False
-    if rule.regex and not rule.regex.search(filename):
-        return False
-    if rule.older_than_days is not None and not _is_older_than(file, rule.older_than_days):
-        return False
-    return True
-
-
-def _matching_rules(file: Path, rules: list[Rule]) -> list[Rule]:
-    return [rule for rule in rules if _rule_matches(file, rule)]
+    return ExplainResult(
+        file=item.source,
+        action=action,
+        rule_name=item.rule_name,
+        rule_priority=item.rule_priority,
+        policy=item.policy,
+        dest=dest,
+        resolved=resolved,
+        matched_rules=[
+            f"{name}(prio={priority})" for name, priority in item.matched_rules
+        ],
+        target_template=item.target_template,
+        rename_template=item.rename_template,
+        rendered_name=item.rendered_name,
+        reason=reason,
+    )
 
 
 def explain_files(
@@ -64,173 +97,43 @@ def explain_files(
     *,
     verbose: bool = False,
 ) -> list[ExplainResult]:
-    """
-    Explain what would happen to each file. Does NOT move/copy anything.
-    """
-    cfg_path, config = _load_config(config_path)
-    base_dir = cfg_path.parent
-
-    source = expand_path(config["source"], base_dir=base_dir)
-    default_target = str(config.get("default_target", str(source / "others").replace("{", "{{").replace("}", "}}")))
-    global_policy = str(config.get("conflict_policy", "rename")).lower()
-    ignore_patterns = load_ignore_patterns(config)
-
-    rules = _load_rules(config, base_dir=base_dir)
-
-    results: list[ExplainResult] = []
-
-    for f in files:
-        f = f.expanduser().absolute()
-
-        if f.is_symlink() or not f.exists() or not f.is_file():
-            results.append(
-                ExplainResult(
-                    file=f,
-                    action="SKIP",
-                    rule_name="n/a",
-                    rule_priority=None,
-                    policy=global_policy,
-                    dest=f,
-                    resolved=None,
-                    matched_rules=[],
-                    target_template=None,
-                    rename_template=None,
-                    rendered_name=f.name,
-                    reason="not_found_or_not_file" if verbose else None,
-                )
-            )
-            continue
-
-        if matches_ignore_pattern(f, ignore_patterns):
-            results.append(
-                ExplainResult(
-                    file=f,
-                    action="SKIP",
-                    rule_name="ignored",
-                    rule_priority=None,
-                    policy=global_policy,
-                    dest=f,
-                    resolved=None,
-                    matched_rules=[],
-                    target_template=None,
-                    rename_template=None,
-                    rendered_name=f.name,
-                    reason="ignored_by_pattern" if verbose else None,
-                )
-            )
-            continue
-
-        matched_rules = _matching_rules(f, rules)
-        rule = _match_rule(f, rules)
-
-        rule_name = rule.name if rule else "default"
-        rule_priority = rule.priority if rule else None
-
-        action = "COPY" if (rule and rule.copy_to) else "MOVE"
-
-        policy = (rule.conflict_policy if rule and rule.conflict_policy else global_policy).lower()
-
-        dest = _resolve_destination(f, rule, default_target=default_target, base_dir=base_dir)
-        resolved = _resolve_conflict(dest, policy)
-        target_template = (rule.copy_to or rule.move_to) if rule else default_target
-        rename_template = rule.rename_template if rule else None
-        rendered_name = dest.name
-
-        reason = None
-        if verbose:
-            parts: list[str] = []
-            parts.append(f"source={source}")
-            parts.append(f"ext={f.suffix.lower() or '-'}")
-
-            if rule:
-                parts.append(f"matched_rule={rule.name}")
-                parts.append(
-                    "matched_candidates="
-                    + ", ".join(f"{item.name}(prio={item.priority})" for item in matched_rules)
-                )
-                if rule.regex:
-                    parts.append("regex=YES")
-                if rule.older_than_days is not None:
-                    parts.append(f"older_than_days={rule.older_than_days}")
-                parts.append(f"target_template={target_template}")
-                if rename_template:
-                    parts.append(f"rename_template={rename_template}")
-                    parts.append(f"rendered_name={rendered_name}")
-            else:
-                parts.append("matched_rule=default")
-                parts.append("matched_candidates=default")
-                parts.append(f"target_template={target_template}")
-                parts.append(f"rendered_name={rendered_name}")
-
-            if dest.exists():
-                parts.append("dest_exists=YES")
-            else:
-                parts.append("dest_exists=NO")
-
-            if resolved is None:
-                parts.append("conflict=skip")
-            elif resolved != dest:
-                parts.append(f"conflict=rename -> {resolved.name}")
-            else:
-                if policy in {"overwrite", "trash"} and dest.exists():
-                    parts.append(f"conflict={policy}")
-                else:
-                    parts.append("conflict=none")
-
-            reason = " ".join(parts)
-
-        results.append(
-            ExplainResult(
-                file=f,
-                action=action,
-                rule_name=rule_name,
-                rule_priority=rule_priority,
-                policy=policy,
-                dest=dest,
-                resolved=resolved,
-                matched_rules=[f"{item.name}(prio={item.priority})" for item in matched_rules],
-                target_template=target_template,
-                rename_template=rename_template,
-                rendered_name=rendered_name,
-                reason=reason,
-            )
-        )
-
-    return results
+    """Explain planned operations without changing the filesystem."""
+    planner = ExecutionPlanner(Path(config_path))
+    return [
+        _explain_result(item, verbose=verbose, source=planner.source)
+        for item in planner.plan_files(files)
+    ]
 
 
-def format_explain(result: ExplainResult, *, fmt: str = "one", verbose: bool = False) -> str:
-    """
-    fmt:
-      - one:  <FILE> -> <DEST> [ACTION] rule=... prio=... policy=... (optional reason)
-      - short: ACTION <FILE> -> <DEST> (rule=...)
-    """
+def format_explain(
+    result: ExplainResult, *, fmt: str = "one", verbose: bool = False
+) -> str:
     file_name = result.file.name
-
     if result.action == "SKIP":
         base = f"{file_name} [SKIP]"
         if verbose and result.reason:
             base += f" ({result.reason})"
         return base
-
+    if result.action == "ERROR":
+        return (
+            f"{file_name} -> {result.dest} [ERROR] {result.reason or 'planning failed'}"
+        )
     if result.resolved is None:
-        dest_str = str(result.dest)
-        base = f"{file_name} -> {dest_str} [SKIP] rule={result.rule_name} prio={result.rule_priority or '-'} policy={result.policy}"
+        base = (
+            f"{file_name} -> {result.dest} [SKIP] rule={result.rule_name} "
+            f"prio={result.rule_priority or '-'} policy={result.policy}"
+        )
         if verbose and result.reason:
             base += f" ({result.reason})"
         return base
-
-    dest_str = str(result.resolved)
-
     if fmt == "short":
-        base = f"{result.action} {file_name} -> {dest_str} (rule={result.rule_name})"
+        base = f"{result.action} {file_name} -> {result.resolved} (rule={result.rule_name})"
         if verbose and result.reason:
             base += f" ({result.reason})"
         return base
-
     base = (
-        f"{file_name} -> {dest_str} "
-        f"[{result.action}] rule={result.rule_name} prio={result.rule_priority or '-'} policy={result.policy}"
+        f"{file_name} -> {result.resolved} [{result.action}] "
+        f"rule={result.rule_name} prio={result.rule_priority or '-'} policy={result.policy}"
     )
     if verbose and result.reason:
         base += f" ({result.reason})"

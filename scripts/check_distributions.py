@@ -11,6 +11,8 @@ def main() -> None:
         "filemindr/__main__.py",
         "filemindr/py.typed",
         "filemindr/core/operations.py",
+        "filemindr/core/planning.py",
+        "filemindr/core/duplicates.py",
         "filemindr/core/templates/yaml_tmpl.py",
     }
     wheels = list(Path("dist").glob("*.whl"))

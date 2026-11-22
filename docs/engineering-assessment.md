@@ -227,3 +227,95 @@ conditional on the full nine-cell CI matrix being green and acceptance of the
 documented compatibility restrictions and remaining Medium planning issues.
 Linux/macOS CI and physical filesystem integration cannot be inferred from local
 Windows tests. No commit, push, merge, tag, or publication was performed.
+
+## Reliability and feature evolution (2026-11-21)
+
+### Shared execution planning
+
+Added `core/planning.py` as the single path for rule priority, ignore handling,
+template rendering, conflict policy, deterministic ordering, destination
+reservations, and file/directory-tree checks. `run`, dry-run, and `explain` now
+consume its structured `PlannedOperation` results. The two previously confirmed
+medium findings are resolved: numbered output names are consistent in explain
+and dry-run, and a planned file that blocks a later destination directory (or a
+planned directory that blocks a file) is reported as an error in both planning
+and execution.
+
+Execution passes the source metadata captured during planning to the existing
+operation layer. It rejects a changed source, destination identity, or
+unsupported destination-parent replacement before publication; operation-level
+hash and publication checks remain in place. Planning itself does not create
+directories or alter source files. Filesystem changes after planning can still
+invalidate a plan, and a narrow race remains between revalidation and mutation.
+
+### Observability
+
+JSON reports and completed/failed history metadata retain existing summary,
+`by_rule`, and event fields and add a `metrics` object with duration, files per
+second, matching counts, skipped/error categories, operation types,
+planned/completed totals, and per-rule counts. Aggregates are finalized once per
+run, so metrics do not add per-file history metadata rewrites. Reports contain
+paths and metadata, not file contents. Partial failures keep planned and
+completed totals distinct.
+
+### Read-only duplicate scanning
+
+Added `filemindr duplicates <directory>` with human and JSON output and optional
+profile ignore patterns. It walks without following directory symlinks, groups
+regular files by size, and hashes same-size candidates in 1 MiB chunks. A group
+is confirmed only by matching size and SHA-256. Read failures, traversal errors,
+and files whose identity/metadata changes during hashing are returned as
+unverified; an incomplete scan exits nonzero. Unique-size files are ruled out
+by size without being read. The command never mutates files and adds no runtime
+dependency.
+
+### Performance and evidence
+
+`docs/benchmarks.md` and `docs/planning-duplicate-benchmarks.json` record the
+serial Windows 11 / CPython 3.12.9 workloads at 100, 10,000, and 100,000 files.
+At 100,000, current dry-run planning took 36.835 seconds (96.57 MiB traced
+peak; 52.18 MiB process RSS baseline and 241.20 MiB sampled peak). The duplicate
+scan took 111.588 seconds (132.01 MiB traced peak; 141.67 MiB baseline and
+372.14 MiB sampled process peak). The scanner workload intentionally made one
+100,000-member duplicate group, so it measures a high-output-memory case.
+Sampling and single-machine limits are documented; these results do not
+establish Linux/macOS performance.
+
+The planner's measured 100,000-file time fell from 74.052 to 36.835 seconds
+after reducing repeated path normalization, stopping ancestor reservation walks
+at shared parents, and caching static destination templates. The first timing
+sample was intermediate; the JSON artifact contains final-source measurements.
+No actual move benchmark was run for this feature iteration.
+
+### Compatibility and remaining limits
+
+Existing CLI commands, YAML fields, conflict policies for existing regular-file
+collisions, summary fields, report events, and history event ordering remain.
+Reports gain the documented `metrics` key and history metadata gains the same
+key at finalization. Explain now shares batch reservations and returns a nonzero
+exit for planning errors, aligning it with execution. New file/directory
+conflicts are explicit errors because leaf-name conflict policies cannot
+reconcile a file with a directory.
+
+The duplicate scan is not a snapshot and may miss content rewritten while
+preserving all checked metadata; Windows creation-time metadata is excluded
+because immediate post-write scans showed unstable creation timestamps. RSS
+sampling can miss short peaks. The 100,000-file planner and scanner consume
+memory proportional to file count and are slow on this Windows host. Linux/macOS
+execution, physical cross-volume operations, network filesystems, and hostile
+concurrent filesystem mutation still require platform-specific testing.
+
+### Local verification
+
+The full test suite passed on Windows with CPython 3.12.9, 3.13.3, and 3.14.0:
+155 passed and 3 symlink-related tests skipped on each interpreter. The 3.12
+coverage run measured 86% statement coverage and 75% branch coverage (83%
+combined). Ruff lint passed, and all Python files changed for this feature pass
+Ruff formatting checks. The repository-wide format check still identifies 14
+unchanged baseline files that would be reformatted.
+
+The wheel and source distribution built successfully, passed Twine metadata
+validation, and passed isolated installed-package smoke checks for CLI help,
+templates, dry-run, move, undo, and the duplicates command. Linux/macOS CI,
+cross-volume behavior, and physical external or network filesystems were not
+available for local validation and remain required environmental checks.
