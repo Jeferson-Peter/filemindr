@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -6,8 +7,17 @@ import yaml
 from loguru import logger
 
 from filemindr.core.config import resolve_profile_config, expand_path
+from filemindr.core.duplicates import scan_duplicates
 from filemindr.core.explain import explain_files, format_explain
-from filemindr.core.history import clear_history, find_run, load_run_events, iter_run_meta, prune_history, retention_days_default, undo_run
+from filemindr.core.history import (
+    clear_history,
+    find_run,
+    load_run_events,
+    iter_run_meta,
+    prune_history,
+    retention_days_default,
+    undo_run,
+)
 from filemindr.core.helpers import open_in_editor, open_with_default_app
 from filemindr.core.ignore import load_ignore_patterns
 from filemindr.core.runner import run_pipeline
@@ -31,8 +41,8 @@ def _setup_logger(level: str) -> None:
         level=level.upper(),
         colorize=True,
         format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-               "<level>{level}</level> | "
-               "{message}",
+        "<level>{level}</level> | "
+        "{message}",
     )
 
 
@@ -48,15 +58,21 @@ def _profiles_file() -> Path:
 def run(
     profile: str = typer.Option(..., "--profile", "-p"),
     dry_run: bool = False,
-    report: Path | None = typer.Option(None, "--report", help="Write a JSON execution report to this path"),
+    report: Path | None = typer.Option(
+        None, "--report", help="Write a JSON execution report to this path"
+    ),
     log_level: str = typer.Option("INFO"),
 ):
     _setup_logger(log_level)
 
     config_path = resolve_profile_config(profile)
-    logger.info(f"Running pipeline | profile={profile} config={config_path} dry_run={dry_run}")
+    logger.info(
+        f"Running pipeline | profile={profile} config={config_path} dry_run={dry_run}"
+    )
 
-    summary = run_pipeline(str(config_path), dry_run, profile=profile, command="run", report_path=report)
+    summary = run_pipeline(
+        str(config_path), dry_run, profile=profile, command="run", report_path=report
+    )
     if summary["errors"]:
         raise typer.Exit(1)
 
@@ -73,13 +89,17 @@ def watch(
     _setup_logger(log_level)
 
     config_path = resolve_profile_config(profile)
-    logger.info(f"Starting watch | profile={profile} config={config_path} dry_run={dry_run}")
+    logger.info(
+        f"Starting watch | profile={profile} config={config_path} dry_run={dry_run}"
+    )
 
     cfg = load_validated_config(Path(config_path))
     source_dir = expand_path(cfg["source"], base_dir=Path(config_path).parent)
     ignore_patterns = load_ignore_patterns(cfg)
 
-    opts = WatchOptions(debounce_ms=debounce_ms, stable_ms=stable_ms, ignore_patterns=ignore_patterns)
+    opts = WatchOptions(
+        debounce_ms=debounce_ms, stable_ms=stable_ms, ignore_patterns=ignore_patterns
+    )
 
     watch_and_run(
         source_dir=source_dir,
@@ -120,6 +140,49 @@ def explain(
 
     for r in results:
         logger.info(format_explain(r, fmt=fmt, verbose=verbose))
+    if any(result.action == "ERROR" for result in results):
+        raise typer.Exit(1)
+
+
+@app.command()
+def duplicates(
+    directory: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True),
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Reuse this profile's ignore patterns"
+    ),
+    output_format: str = typer.Option(
+        "human", "--format", help="Output format: human or json"
+    ),
+):
+    """Find confirmed identical files without changing them."""
+    if output_format not in {"human", "json"}:
+        raise typer.BadParameter("Format must be 'human' or 'json'")
+    if directory.is_symlink():
+        raise typer.BadParameter("Scanning a symbolic-link root is unsupported")
+    patterns = []
+    if profile:
+        config_path = Path(resolve_profile_config(profile))
+        patterns = load_ignore_patterns(load_validated_config(config_path))
+    result = scan_duplicates(directory, ignore_patterns=patterns)
+    if output_format == "json":
+        typer.echo(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(
+            f"Scanned {result.files_scanned} files; hashed {result.files_hashed}; "
+            f"confirmed {len(result.groups)} duplicate group(s)."
+        )
+        for group in result.groups:
+            typer.echo(f"\n{group.size} bytes | sha256={group.sha256}")
+            for path in group.paths:
+                typer.echo(f"  {path}")
+        typer.echo(
+            f"\nSkipped {result.ignored} ignored path(s) and "
+            f"{result.symlinks_skipped} symbolic link(s)."
+        )
+        for item in result.unverified:
+            typer.echo(f"UNVERIFIED {item.path}: {item.reason}")
+    if result.unverified:
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -151,7 +214,9 @@ def undo(
     _setup_logger(log_level)
 
     result = undo_run(run_id)
-    logger.info(f"Undo completed | original_run={result.run_id} undo_run={result.undo_run_id}")
+    logger.info(
+        f"Undo completed | original_run={result.run_id} undo_run={result.undo_run_id}"
+    )
     logger.info(f"Reverted: {result.reverted}")
     logger.info(f"Skipped: {result.skipped}")
     logger.info(f"Errors: {result.errors}")
@@ -201,7 +266,9 @@ def profile_init(
 @history_app.command("list")
 def history_list(
     limit: int = typer.Option(20, "--limit", "-n"),
-    all_runs: bool = typer.Option(False, "--all", help="Include legacy/internal runs without a command label"),
+    all_runs: bool = typer.Option(
+        False, "--all", help="Include legacy/internal runs without a command label"
+    ),
 ):
     items = iter_run_meta()
     if not all_runs:
@@ -271,7 +338,12 @@ def history_clear(
 
 @profile_app.command("list")
 def profile_list(
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show main settings (source/default_target/conflict_policy)"),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show main settings (source/default_target/conflict_policy)",
+    ),
 ):
     """
     List all profiles
@@ -360,31 +432,42 @@ def profile_remove(
     profiles = data.get("profiles", {})
 
     if name not in profiles:
-        typer.echo(f"Profile '{name}' not found.\n\nCreate it with:\n  filemindr profile init {name}")
+        typer.echo(
+            f"Profile '{name}' not found.\n\nCreate it with:\n  filemindr profile init {name}"
+        )
         raise typer.Exit(1)
 
     profile_dir = Path(profiles[name]).expanduser()
     managed_root = (_home() / "rules").resolve()
     resolved_dir = profile_dir.resolve()
-    if ((_home() / "rules").is_symlink() or (_home() / "rules").is_junction()
-            or profile_dir.is_symlink() or profile_dir.is_junction()
-            or not resolved_dir.is_relative_to(managed_root) or resolved_dir == managed_root
-            or resolved_dir != managed_root / name):
-        raise typer.BadParameter("Refusing recursive deletion outside the managed profile directory")
+    if (
+        (_home() / "rules").is_symlink()
+        or (_home() / "rules").is_junction()
+        or profile_dir.is_symlink()
+        or profile_dir.is_junction()
+        or not resolved_dir.is_relative_to(managed_root)
+        or resolved_dir == managed_root
+        or resolved_dir != managed_root / name
+    ):
+        raise typer.BadParameter(
+            "Refusing recursive deletion outside the managed profile directory"
+        )
 
     if not yes:
-        if not typer.confirm(f"Delete profile '{name}' and ALL its files at:\n{profile_dir}\nContinue?"):
+        if not typer.confirm(
+            f"Delete profile '{name}' and ALL its files at:\n{profile_dir}\nContinue?"
+        ):
             raise typer.Exit()
 
     if profile_dir.exists():
         import shutil
+
         shutil.rmtree(profile_dir)
 
     del profiles[name]
     pf.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
     typer.echo(f"Profile '{name}' completely removed.")
-
 
 
 @app.command()
@@ -438,8 +521,16 @@ def doctor():
         source = cfg.get("source")
         default_target = cfg.get("default_target")
 
-        source_path = expand_path(source, base_dir=rules_yaml.parent) if isinstance(source, str) else None
-        target_path = expand_path(default_target, base_dir=rules_yaml.parent) if isinstance(default_target, str) else None
+        source_path = (
+            expand_path(source, base_dir=rules_yaml.parent)
+            if isinstance(source, str)
+            else None
+        )
+        target_path = (
+            expand_path(default_target, base_dir=rules_yaml.parent)
+            if isinstance(default_target, str)
+            else None
+        )
 
         warn = False
 

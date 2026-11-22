@@ -116,3 +116,42 @@ Additional measurements should cover representative large files, copies and
 replacement staging, pathological regexes, heavy name collisions, native watcher
 overflow, total process RSS, and real external/network volumes. None of these
 results demonstrates universally atomic or lossless operations.
+
+## Shared planning and duplicate scanning (2026-11-21)
+
+The separate [planning and duplicate benchmark](planning-duplicate-benchmarks.json)
+measures the current shared planner in dry-run mode and the read-only duplicate
+scanner. It runs 100, 10,000, and 100,000 files in one serial Windows process.
+Fixture creation and cleanup are outside the timed/traced stages. All fixture
+files are eight bytes with identical content, so the duplicate scan hashes every
+file and returns one large confirmed group. This is a high-memory result-shape
+case, not a representative content distribution.
+
+| Files | Dry-run planning | Planning traced peak | Planning RSS baseline → sampled peak | Duplicate scan | Duplicate traced peak | Duplicate RSS baseline → sampled peak |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 | 0.044 s | 0.15 MiB | 33.66 → 34.03 MiB | 0.113 s | 1.14 MiB | 34.02 → 35.10 MiB |
+| 10,000 | 3.692 s | 9.64 MiB | 35.04 → 54.89 MiB | 10.534 s | 12.73 MiB | 44.55 → 68.06 MiB |
+| 100,000 | 36.835 s | 96.57 MiB | 52.18 → 241.20 MiB | 111.588 s | 132.01 MiB | 141.67 → 372.14 MiB |
+
+The dry-run planner's main scaling cost is holding a stable ordered source list
+and one reservation per planned destination; the implementation releases per
+destination parent traversal once a shared ancestor is known and caches static
+target templates. Memory grows with the number of planned paths. The scanner
+must retain size buckets and confirmed result paths; a 100,000-path duplicate
+group therefore has substantial memory and output cost. It frees each size
+bucket as it hashes it, but the confirmed group still needs all member paths.
+
+The benchmark records Python `tracemalloc` peaks separately from sampled process
+RSS. RSS is sampled every 10 ms with the Windows process API; brief peaks can be
+missed. Later stage baselines include retained interpreter/allocator memory from
+earlier work in the same process. This is one warm-cache sample on Windows 11,
+CPython 3.12.9, NTFS, an Intel Core i7-13620H, and 16 logical CPUs. Do not treat
+these figures as cross-platform performance guarantees. The 100,000-file scan
+took nearly two minutes, so duplicate detection is best run as an explicit,
+read-only command when needed rather than during every pipeline execution.
+
+Reproduce with:
+
+```powershell
+uv run python scripts/benchmark_planning_duplicates.py
+```

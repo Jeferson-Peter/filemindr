@@ -1,43 +1,57 @@
 from __future__ import annotations
 
 import json
-import re
 import time
-from collections import Counter
-from dataclasses import dataclass
+from collections import Counter, defaultdict
 from pathlib import Path
 from threading import Event
 from typing import Any
 
 from loguru import logger
 
-from filemindr.core.config import expand_path
 from filemindr.core.history import HistoryWriter, prune_history, retention_days_default
-from filemindr.core.ignore import load_ignore_patterns, matches_ignore_pattern
 from filemindr.core.operations import (
     INTERNAL_PREFIX,
-    POLICIES,
     OperationPlan,
     PartialOperationError,
-    destination_identity,
     execute_operation,
-    same_file,
 )
-from filemindr.core.templating import render_name_template, render_target_template
-from filemindr.core.validator import load_validated_config
+from filemindr.core.planning import (
+    DestinationReservations,
+    ExecutionPlanner,
+    Rule,
+    is_older_than as _is_older_than,
+    load_rules as _load_rules,
+    matching_rules,
+    normalize_ext as _normalize_ext,
+    resolve_conflict,
+    resolve_destination as _resolve_destination,
+)
+
+__all__ = [
+    "_is_older_than",
+    "_load_rules",
+    "_normalize_ext",
+    "_resolve_destination",
+    "_resolve_conflict",
+    "_match_rule",
+    "Rule",
+    "run_pipeline",
+]
 
 
-@dataclass(frozen=True)
-class Rule:
-    name: str
-    priority: int
-    extensions: set[str]
-    regex: re.Pattern | None
-    older_than_days: int | None
-    move_to: str | None
-    copy_to: str | None
-    rename_template: str | None
-    conflict_policy: str | None
+def _match_rule(file: Path, rules: list[Rule]) -> Rule | None:
+    matched = matching_rules(file, rules)
+    return matched[0] if matched else None
+
+
+def _resolve_conflict(
+    dest: Path, policy: str, *, reserved: set[Path] | None = None
+) -> Path | None:
+    reservations = DestinationReservations()
+    for path in reserved or ():
+        reservations.reserve(path)
+    return resolve_conflict(dest, policy, reservations)
 
 
 def _trash(path: Path) -> None:
@@ -47,111 +61,6 @@ def _trash(path: Path) -> None:
         send2trash(str(path))
     except Exception as exc:
         raise RuntimeError(f"Failed to send '{path}' to trash") from exc
-
-
-def _normalize_ext(ext: str) -> str:
-    return ext.lower().lstrip(".")
-
-
-def _load_rules(config: dict[str, Any], *, base_dir: Path | None = None) -> list[Rule]:
-    rules: list[Rule] = []
-    for item in config.get("rules") or []:
-        match = item.get("match") or {}
-        action = item.get("action") or {}
-        if bool(action.get("move_to")) == bool(action.get("copy_to")):
-            raise ValueError(
-                f"Rule '{item.get('name', 'unnamed')}' must define exactly one of action.move_to or action.copy_to"
-            )
-        rules.append(
-            Rule(
-                name=item.get("name", "unnamed"),
-                priority=int(item.get("priority", 0)),
-                extensions={
-                    _normalize_ext(ext) for ext in match.get("extensions") or []
-                },
-                regex=re.compile(match["regex"]) if match.get("regex") else None,
-                older_than_days=int(match["older_than_days"])
-                if match.get("older_than_days") is not None
-                else None,
-                move_to=action.get("move_to"),
-                copy_to=action.get("copy_to"),
-                rename_template=action.get("rename_template"),
-                conflict_policy=action.get("conflict_policy"),
-            )
-        )
-    return sorted(rules, key=lambda rule: rule.priority, reverse=True)
-
-
-def _is_older_than(file: Path, days: int) -> bool:
-    return time.time() - file.stat().st_mtime >= days * 86400
-
-
-def _match_rule(file: Path, rules: list[Rule]) -> Rule | None:
-    ext = _normalize_ext(file.suffix)
-    for rule in rules:
-        if rule.extensions and ext not in rule.extensions:
-            continue
-        if rule.regex and not rule.regex.search(file.name):
-            continue
-        if rule.older_than_days is not None and not _is_older_than(
-            file, rule.older_than_days
-        ):
-            continue
-        return rule
-    return None
-
-
-def _resolve_conflict(
-    dest: Path, policy: str, *, reserved: set[Path] | None = None
-) -> Path | None:
-    policy = policy.lower()
-    if policy not in POLICIES:
-        raise ValueError(f"Invalid conflict policy: {policy}")
-    reserved = reserved or set()
-    if not dest.exists() and not dest.is_symlink() and dest not in reserved:
-        return dest
-    if dest.is_symlink() or (dest.exists() and not dest.is_file()):
-        raise ValueError(f"Destination is not a regular file: {dest}")
-    if policy in {"overwrite", "trash"}:
-        return dest
-    if policy == "skip":
-        return None
-    i = 1
-    while True:
-        candidate = dest.with_name(f"{dest.stem} ({i}){dest.suffix}")
-        if (
-            not candidate.exists()
-            and not candidate.is_symlink()
-            and candidate not in reserved
-        ):
-            return candidate
-        i += 1
-
-
-def _resolve_destination(
-    file: Path,
-    rule: Rule | None,
-    *,
-    default_target: str,
-    base_dir: Path | None = None,
-) -> Path:
-    template = (rule.copy_to or rule.move_to) if rule else default_target
-    directory = render_target_template(template, file=file, base_dir=base_dir)
-    if directory == file.parent.resolve():
-        raise ValueError(
-            "Destination directory must differ from source (prevents repeated watch processing)"
-        )
-    name = (
-        render_name_template(rule.rename_template, file=file)
-        if rule and rule.rename_template
-        else file.name
-    )
-    destination = directory / name
-    if destination.is_symlink():
-        raise ValueError(f"Destination symlinks are unsupported: {destination}")
-    if same_file(file, destination):
-        raise ValueError("Source and destination refer to the same file")
-    return destination
 
 
 def run_pipeline(
@@ -164,17 +73,13 @@ def run_pipeline(
     report_path: Path | None = None,
     stop_event: Event | None = None,
 ) -> dict[str, int]:
-    cfg_abs = Path(config_path).expanduser().resolve()
-    config = load_validated_config(cfg_abs)
+    started = time.perf_counter()
+    planner = ExecutionPlanner(Path(config_path))
+    cfg_abs = planner.config_path
+    source = planner.source
     if report_path is not None and (report_path.exists() or report_path.is_symlink()):
         raise FileExistsError(f"Report path already exists: {report_path}")
-    source = expand_path(config["source"], base_dir=cfg_abs.parent)
-    default_target = config.get(
-        "default_target", str(source / "others").replace("{", "{{").replace("}", "}}")
-    )
-    global_policy = str(config.get("conflict_policy", "rename"))
-    ignore_patterns = load_ignore_patterns(config)
-    rules = _load_rules(config)
+
     history = None
     if profile and command in {"run", "watch"}:
         prune_history(days=retention_days_default())
@@ -201,8 +106,31 @@ def run_pipeline(
         0,
     )
     by_rule: Counter[str] = Counter()
+    rule_matches: Counter[str] = Counter()
+    skipped_by_reason: Counter[str] = Counter()
+    errors_by_category: Counter[str] = Counter()
+    operations_by_type: Counter[str] = Counter()
+    planned: Counter[str] = Counter()
+    completed: Counter[str] = Counter()
+    per_rule: dict[str, Counter[str]] = defaultdict(Counter)
     events: list[dict[str, Any]] = []
-    reserved: set[Path] = set()
+
+    def metrics() -> dict[str, Any]:
+        elapsed = max(time.perf_counter() - started, 1e-9)
+        return {
+            "duration_seconds": round(elapsed, 6),
+            "files_per_second": round(summary["files_scanned"] / elapsed, 2),
+            "rule_matches": dict(sorted(rule_matches.items())),
+            "skipped_by_reason": dict(sorted(skipped_by_reason.items())),
+            "errors_by_category": dict(sorted(errors_by_category.items())),
+            "operations_by_type": dict(sorted(operations_by_type.items())),
+            "planned": dict(sorted(planned.items())),
+            "completed": dict(sorted(completed.items())),
+            "per_rule": {
+                name: dict(sorted(values.items()))
+                for name, values in sorted(per_rule.items())
+            },
+        }
 
     def record(event: dict[str, Any]) -> None:
         if history:
@@ -210,123 +138,173 @@ def run_pipeline(
         if report_path is not None:
             events.append(event)
 
-    # Watch batches must not rescan a large directory for every few changed files.
-    files = sorted(only_paths) if only_paths is not None else source.iterdir()
-    logger.info(f"Scanning: {source}")
-    try:
-        for file in files:
-            if stop_event is not None and stop_event.is_set():
-                break
-            if file.parent != source or file.is_symlink() or not file.is_file():
+    def candidates():
+        items = sorted(only_paths) if only_paths is not None else source.iterdir()
+        for file in items:
+            if file.parent != source:
+                continue
+            if file.is_symlink():
+                skipped_by_reason["unsupported_symlink"] += 1
+                continue
+            if not file.is_file():
+                skipped_by_reason["not_regular_file"] += 1
                 continue
             if file.name.startswith(INTERNAL_PREFIX) or file == cfg_abs:
+                skipped_by_reason["internal_file"] += 1
                 continue
             if report_path is not None and file == report_path.absolute():
+                skipped_by_reason["report_file"] += 1
                 continue
-            if matches_ignore_pattern(file, ignore_patterns):
+            yield file
+
+    try:
+        logger.info(f"Scanning: {source}")
+        for item in planner.plan_files(
+            candidates(), capture_destination_identity=not dry_run
+        ):
+            if stop_event is not None and stop_event.is_set():
+                break
+            if item.reason == "ignored_by_pattern":
+                skipped_by_reason["ignored_by_pattern"] += 1
                 continue
+
             summary["files_scanned"] += 1
+            for name, _priority in item.matched_rules:
+                rule_matches[name] += 1
+                per_rule[name]["matched"] += 1
+            rule_name = item.rule_name
+            policy = item.policy
             event: dict[str, Any] = {
-                "source": str(file),
-                "rule": "default",
-                "policy": global_policy.lower(),
+                "source": str(item.source),
+                "rule": rule_name,
+                "policy": policy,
             }
-            try:
-                rule = _match_rule(file, rules)
-                rule_name = rule.name if rule else "default"
-                policy = str(
-                    rule.conflict_policy
-                    if rule and rule.conflict_policy
-                    else global_policy
-                ).lower()
-                destination = _resolve_destination(
-                    file, rule, default_target=default_target, base_dir=cfg_abs.parent
+            if item.requested_destination is not None:
+                event["destination"] = str(
+                    item.destination or item.requested_destination
                 )
-                event.update(
-                    rule=rule_name, policy=policy, destination=str(destination)
-                )
-                resolved = _resolve_conflict(destination, policy, reserved=reserved)
-                if resolved is None:
+
+            if item.status == "error":
+                summary["errors"] += 1
+                errors_by_category["PlanningError"] += 1
+                per_rule[rule_name]["errors"] += 1
+                record(event | {"event": "error", "error": item.error})
+                logger.error(f"ERROR planning {item.source}: {item.error}")
+                continue
+
+            if item.status == "skipped":
+                reason = item.reason or "skipped"
+                skipped_by_reason[reason] += 1
+                if reason == "conflict_policy_skip":
                     summary["skipped"] += 1
                     by_rule[rule_name] += 1
-                    record(event | {"event": "skipped"})
-                    continue
-                event["destination"] = str(resolved)
-                action = "COPY" if rule and rule.copy_to else "MOVE"
-                if dry_run:
-                    reserved.add(resolved)
-                    summary[
-                        "planned_copies" if action == "COPY" else "planned_moves"
-                    ] += 1
+                    per_rule[rule_name]["skipped"] += 1
+                    record(event | {"event": "skipped", "reason": reason})
+                continue
+
+            assert item.destination is not None and item.source_snapshot is not None
+            action_key = "copies" if item.action == "COPY" else "moves"
+            planned[action_key] += 1
+            per_rule[rule_name][f"planned_{action_key}"] += 1
+            if dry_run:
+                summary[
+                    "planned_copies" if action_key == "copies" else "planned_moves"
+                ] += 1
+                by_rule[rule_name] += 1
+                record(
+                    event
+                    | {
+                        "event": "planned_copy"
+                        if action_key == "copies"
+                        else "planned_move",
+                        "action": item.action,
+                    }
+                )
+                logger.debug(f"[DRY] {item.action} {item.source} -> {item.destination}")
+                continue
+
+            if history:
+                record(
+                    event
+                    | {
+                        "event": "operation_started",
+                        "action": item.action,
+                        "undo_supported": False,
+                    }
+                )
+            try:
+                result = execute_operation(
+                    OperationPlan(
+                        item.source,
+                        item.destination,
+                        item.action,
+                        policy,
+                        item.expected_destination,
+                    ),
+                    trash=_trash,
+                    expected_source_snapshot=item.source_snapshot,
+                )
+                if result.replaced:
+                    replacement = "trashed" if policy == "trash" else "overwritten"
+                    summary[replacement] += 1
+                    operations_by_type[replacement] += 1
                     record(
                         event
                         | {
-                            "event": "planned_copy"
-                            if action == "COPY"
-                            else "planned_move"
+                            "event": replacement,
+                            "path": str(item.destination),
+                            "undo_supported": False,
                         }
                     )
-                    logger.debug(f"[DRY] {action} {file} -> {resolved}")
-                else:
-                    plan = OperationPlan(
-                        file, resolved, action, policy, destination_identity(resolved)
-                    )
-                    if history:
-                        record(
-                            event
-                            | {
-                                "event": "operation_started",
-                                "action": action,
-                                "undo_supported": False,
-                            }
-                        )
-                    result = execute_operation(plan, trash=_trash)
-                    if result.replaced:
-                        replaced_event = (
-                            "trashed" if policy == "trash" else "overwritten"
-                        )
-                        summary[replaced_event] += 1
-                        record(
-                            event
-                            | {
-                                "event": replaced_event,
-                                "path": str(resolved),
-                                "undo_supported": False,
-                            }
-                        )
-                    key = "copied" if action == "COPY" else "moved"
-                    summary[key] += 1
-                    record(
-                        event
-                        | {
-                            "event": key,
-                            "identity": result.identity,
-                            "undo_supported": action == "MOVE"
-                            and not result.replaced
-                            and result.identity["inode"] != 0,
-                        }
-                    )
-                    logger.debug(f"{action} {file} -> {resolved}")
+                completed[action_key] += 1
+                operations_by_type["copy" if action_key == "copies" else "move"] += 1
+                per_rule[rule_name][f"completed_{action_key}"] += 1
+                result_key = "copied" if item.action == "COPY" else "moved"
+                summary[result_key] += 1
+                record(
+                    event
+                    | {
+                        "event": result_key,
+                        "identity": result.identity,
+                        "undo_supported": item.action == "MOVE"
+                        and not result.replaced
+                        and result.identity["inode"] != 0,
+                    }
+                )
+                logger.debug(f"{item.action} {item.source} -> {item.destination}")
                 by_rule[rule_name] += 1
             except Exception as exc:
                 summary["errors"] += 1
+                category = type(exc).__name__
+                errors_by_category[category] += 1
+                per_rule[rule_name]["errors"] += 1
+                failure = event | {
+                    "event": "error",
+                    "error": str(exc),
+                    "error_category": category,
+                    "undo_supported": False,
+                }
                 if isinstance(exc, PartialOperationError):
-                    event["recovery_path"] = str(exc.recovery_path)
-                record(
-                    event
-                    | {"event": "error", "error": str(exc), "undo_supported": False}
-                )
-                logger.error(f"ERROR processing {file}: {exc}")
+                    failure["recovery_path"] = str(exc.recovery_path)
+                record(failure)
+                logger.error(f"ERROR processing {item.source}: {exc}")
+
+        final_metrics = metrics()
         if history:
             if stop_event is not None and stop_event.is_set():
-                history.fail("Interrupted between file operations")
+                history.fail(
+                    "Interrupted between file operations", metrics=final_metrics
+                )
             elif summary["errors"]:
-                history.fail(f"{summary['errors']} file operation(s) failed")
+                history.fail(
+                    f"{summary['errors']} file operation(s) failed",
+                    metrics=final_metrics,
+                )
             else:
-                history.complete()
+                history.complete(metrics=final_metrics)
     except BaseException as exc:
         if history:
-            history.fail(str(exc) or type(exc).__name__)
+            history.fail(str(exc) or type(exc).__name__, metrics=metrics())
         raise
 
     logger.info("==== SUMMARY ====")
@@ -345,9 +323,7 @@ def run_pipeline(
         )
     ):
         logger.info(f"{label}: {summary[key]}")
-    logger.info("By rule:")
-    for name, count in by_rule.most_common():
-        logger.info(f"  - {name}: {count}")
+    logger.info(f"Files per second: {final_metrics['files_per_second']}")
     if report_path is not None:
         payload = dict(
             profile=profile,
@@ -357,9 +333,9 @@ def run_pipeline(
             dry_run=dry_run,
             summary=summary,
             by_rule=dict(by_rule),
+            metrics=final_metrics,
             events=events,
         )
-        # Reports may not clobber any existing file, including source data/configs.
         report_path.parent.mkdir(parents=True, exist_ok=True)
         with report_path.open("x", encoding="utf-8") as stream:
             stream.write(json.dumps(payload, indent=2))

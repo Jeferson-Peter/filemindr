@@ -74,6 +74,7 @@ class HistoryWriter:
             meta_path=run_dir / "meta.json",
         )
         self._counts: dict[str, int] = {}
+        self._metrics: dict[str, Any] | None = None
         self._write_meta(status="running")
 
     def _write_meta(
@@ -92,6 +93,8 @@ class HistoryWriter:
             "counts": self._counts,
             "error": error,
         }
+        if self._metrics is not None:
+            payload["metrics"] = self._metrics
         fd, temporary = tempfile.mkstemp(
             prefix=".meta-", suffix=".tmp", dir=self.run.meta_path.parent
         )
@@ -115,10 +118,12 @@ class HistoryWriter:
             fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
         # JSONL is the live audit log. Rewrite aggregate metadata only on finish.
 
-    def complete(self) -> None:
+    def complete(self, *, metrics: dict[str, Any] | None = None) -> None:
+        self._metrics = metrics
         self._write_meta(status="completed", finished_at=_utc_now().isoformat())
 
-    def fail(self, error: str) -> None:
+    def fail(self, error: str, *, metrics: dict[str, Any] | None = None) -> None:
+        self._metrics = metrics
         self._write_meta(
             status="failed", finished_at=_utc_now().isoformat(), error=error
         )

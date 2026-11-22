@@ -110,6 +110,20 @@ def _check_destination(plan: OperationPlan) -> None:
         raise FileExistsError(f"Destination changed since planning: {plan.destination}")
 
 
+def _check_destination_parents(destination: Path) -> None:
+    for parent in reversed((*destination.parents, destination.parent)):
+        try:
+            info = parent.lstat()
+        except FileNotFoundError:
+            continue
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or parent.is_symlink()
+            or parent.is_junction()
+        ):
+            raise OSError(f"Destination parent changed or is unsupported: {parent}")
+
+
 def _publish_staged(source: Path, destination: Path) -> None:
     if os.name == "nt":
         # Windows rename refuses existing destinations and needs no hard links.
@@ -172,15 +186,28 @@ def execute_operation(
     *,
     trash: Callable[[Path], None] | None = None,
     expected_source: dict[str, int | str] | None = None,
+    expected_source_snapshot: tuple[int, ...] | None = None,
 ) -> OperationResult:
     if plan.policy not in POLICIES or plan.action not in {"MOVE", "COPY"}:
         raise ValueError("Invalid operation action or conflict policy")
+    if (
+        expected_source_snapshot is not None
+        and snapshot(plan.source) != expected_source_snapshot
+    ):
+        raise OSError(f"Source changed since planning: {plan.source}")
     initial = file_identity(plan.source)
+    if (
+        expected_source_snapshot is not None
+        and snapshot(plan.source) != expected_source_snapshot
+    ):
+        raise OSError(f"Source changed since planning: {plan.source}")
     if expected_source is not None and initial != expected_source:
         raise ValueError(f"File identity no longer matches history: {plan.source}")
     if same_file(plan.source, plan.destination):
         raise ValueError("Source and destination refer to the same file")
+    _check_destination_parents(plan.destination)
     plan.destination.parent.mkdir(parents=True, exist_ok=True)
+    _check_destination_parents(plan.destination)
     _check_destination(plan)
     staged: Path | None = None
     backup: Path | None = None
@@ -190,6 +217,7 @@ def execute_operation(
         # Hard-link publication cannot clobber a path created by another process.
         if plan.action == "MOVE" and plan.expected_destination is None:
             try:
+                _check_destination_parents(plan.destination)
                 os.link(plan.source, plan.destination, follow_symlinks=False)
                 published = True
             except OSError as exc:
@@ -197,6 +225,7 @@ def execute_operation(
                     raise
         if not published:
             staged, published_identity = _stage(plan.source, plan.destination, initial)
+            _check_destination_parents(plan.destination)
             _check_destination(plan)
             if plan.expected_destination is not None:
                 if plan.policy == "trash":

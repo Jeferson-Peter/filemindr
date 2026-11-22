@@ -35,6 +35,8 @@ Built as a learning and portfolio project with strong focus on:
   - `trash`
 - Dry-run mode
 - JSON execution reports
+- Shared destination planning across execution, dry-run, and explain
+- Read-only duplicate detection by size and SHA-256
 - Explain mode
 - Watch mode
 - Run history with `list`, `show`, `prune`, and `clear`
@@ -232,6 +234,23 @@ Example report payload:
     "dated-pdfs": 22,
     "images": 12
   },
+  "metrics": {
+    "duration_seconds": 0.25,
+    "files_per_second": 220.0,
+    "rule_matches": {"dated-pdfs": 22, "images": 12},
+    "skipped_by_reason": {"ignored_by_pattern": 2},
+    "errors_by_category": {},
+    "operations_by_type": {"move": 55},
+    "planned": {"moves": 55},
+    "completed": {"moves": 55},
+    "per_rule": {
+      "dated-pdfs": {
+        "matched": 22,
+        "planned_moves": 22,
+        "completed_moves": 22
+      }
+    }
+  },
   "events": [
     {
       "event": "moved",
@@ -342,6 +361,59 @@ Example of a normalized file name:
 ```yaml
 rename_template: "{stem_safe}_{yyyy}-{mm}{suffix}"
 ```
+
+---
+
+## Planning Semantics
+
+Normal runs, dry-run, and explain use the same planner. It applies rule
+priorities, templates, ignore patterns, and conflict policies in stable source
+path order. A dry-run plans destinations without creating target directories or
+changing source files; `explain` uses the same reservations for all files passed
+in one invocation. Both identify when a planned output file blocks another
+planned destination directory, or when a destination directory blocks a file.
+Such file/directory conflicts are reported as errors because filename conflict
+policies cannot safely turn a directory into a file (or vice versa).
+
+Plans record source metadata and the expected destination identity. Execution
+rechecks source and destination state before modification, then the operation
+layer performs its own content and publication checks. A plan is not a snapshot:
+concurrent changes can invalidate it and cause an operation to fail. A narrow
+race remains between each check and filesystem mutation; arbitrary hostile
+writers and network filesystem transaction semantics are not guaranteed.
+
+Reports and completed history metadata include lightweight `metrics`: elapsed
+seconds, files per second, rule match counts, skipped/error categories,
+operations by type, planned/completed totals, and per-rule counts. Existing
+summary, `by_rule`, and event fields remain available. Metrics contain paths and
+operation metadata only, never file contents. History stores the aggregate once
+at completion rather than rewriting it for every event.
+
+---
+
+## Duplicate Detection
+
+Find files with identical contents without changing them:
+
+```bash
+filemindr duplicates ~/Downloads
+filemindr duplicates ~/Downloads --format json
+filemindr duplicates ~/Downloads --profile home
+```
+
+The scanner walks recursively without following symlink entries, groups regular
+files by size, then hashes same-size candidates with SHA-256 in 1 MiB chunks.
+Only matching size and hash produce a confirmed duplicate group. A profile can
+provide the YAML `ignore` patterns. The JSON result includes paths, byte sizes,
+hashes, scan counts, skipped symlinks, and files/directories that could not be
+verified. An incomplete scan exits with status 1. Files in unique-size buckets
+are ruled out by size and are not read. No duplicate is deleted, moved, renamed,
+or automatically deduplicated.
+
+The scan is not a filesystem snapshot. It compares file identity and metadata
+before and after hashing and reports files observed changing, but a writer that
+changes content while restoring observable metadata may evade detection. Files
+that cannot be read are listed as unverified, not reported as unique.
 
 ---
 

@@ -24,6 +24,13 @@ def main() -> None:
         "filemindr.exe" if os.name == "nt" else "filemindr"
     )
     subprocess.run([str(executable), "--help"], check=True, capture_output=True)
+    duplicate_help = subprocess.run(
+        [str(executable), "duplicates", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "directory" in duplicate_help.stdout
     subprocess.run(
         [sys.executable, "-I", "-m", "filemindr", "--help"],
         check=True,
