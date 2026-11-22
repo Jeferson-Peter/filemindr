@@ -139,7 +139,8 @@ def test_scanner_skips_symlinks_and_honors_ignore_patterns(tmp_path: Path):
     assert result.files_scanned == 2
     assert result.ignored == 1
     assert result.symlinks_skipped == 2
-    assert not result.groups
+    assert len(result.groups) == 1
+    assert set(result.groups[0].paths) == {original, nested / "inside.txt"}
     assert original.exists() and alias.is_symlink()
 
 
