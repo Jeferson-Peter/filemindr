@@ -619,7 +619,9 @@ See the [engineering assessment](docs/engineering-assessment.md),
 
 ## Status
 
-Current release line: `1.4.x`
+Current release line: `1.5.x`
+
+Release notes for `1.5.0` are in [release-notes/v1.5.0.md](release-notes/v1.5.0.md).
 
 ---
 
