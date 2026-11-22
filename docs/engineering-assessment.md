@@ -301,9 +301,10 @@ The duplicate scan is not a snapshot and may miss content rewritten while
 preserving all checked metadata; Windows creation-time metadata is excluded
 because immediate post-write scans showed unstable creation timestamps. RSS
 sampling can miss short peaks. The 100,000-file planner and scanner consume
-memory proportional to file count and are slow on this Windows host. Linux/macOS
-execution, physical cross-volume operations, network filesystems, and hostile
-concurrent filesystem mutation still require platform-specific testing.
+memory proportional to file count and are slow on this Windows host. The full
+GitHub Actions matrix passed on Windows, macOS, and Linux with Python 3.12–3.14.
+Physical cross-volume operations, network filesystems, and hostile concurrent
+filesystem mutation still require platform-specific integration testing.
 
 ### Local verification
 
@@ -316,6 +317,7 @@ unchanged baseline files that would be reformatted.
 
 The wheel and source distribution built successfully, passed Twine metadata
 validation, and passed isolated installed-package smoke checks for CLI help,
-templates, dry-run, move, undo, and the duplicates command. Linux/macOS CI,
-cross-volume behavior, and physical external or network filesystems were not
-available for local validation and remain required environmental checks.
+templates, dry-run, move, undo, and the duplicates command. GitHub Actions
+passed all nine Windows/macOS/Ubuntu and Python 3.12–3.14 jobs, and GitGuardian
+passed. Physical cross-volume behavior and external or network filesystems
+were not available for local validation and remain environmental limits.

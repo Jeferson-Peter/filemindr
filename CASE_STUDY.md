@@ -134,19 +134,20 @@ user's pipeline. No automatic deletion or deduplication is performed.
 
 ## Cross-platform and release discipline
 
-Local validation for this feature iteration covers Windows/NTFS on Python 3.12
-so far. Linux/macOS and Python 3.13/3.14 still need validation before claiming
-cross-platform release readiness. Symlink creation tests skip when privileges
-are unavailable. Cross-device errors are simulated; physical multi-volume
-transfers and network shares require further integration testing.
+Local integration validation for this feature iteration covers Windows/NTFS on
+Python 3.12.9. GitHub Actions passed the full nine-job matrix on Windows,
+macOS, and Ubuntu with Python 3.12–3.14. Symlink creation tests skip when
+privileges are unavailable. Cross-device errors are simulated; physical
+multi-volume transfers and network shares still require integration testing.
 
 The first archive inspection revealed that Hatch's default source selection
 included a local report. Explicit inclusion patterns now keep unrelated local
-files out. Publishing requires an intentional dispatch on `development` after the
-test matrix. Environment approval rules must be configured in GitHub itself.
-No release, tag, push, or merge was performed during this local review.
+files out. PR #8 was merged into `development` on 2026-11-22 after the full
+matrix passed. Versioned release notes and version metadata are prepared
+separately; publication runs only through an intentional dispatch on
+`development`. Environment approval rules must be configured in GitHub itself.
 
-The next useful work is platform integration evidence: real cross-volume moves,
-locked files under Windows sharing modes, representative large media files,
-network filesystems, and native watcher overflow/reconciliation behavior. The
+The remaining platform integration work is real cross-volume moves, locked
+files under Windows sharing modes, representative large media files, network
+filesystems, and native watcher overflow/reconciliation behavior. The
 [assessment](docs/engineering-assessment.md) tracks the remaining limits.
